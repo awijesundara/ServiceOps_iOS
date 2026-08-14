@@ -1024,6 +1024,11 @@ private struct MobileMoreView: View {
                                      biometricLockEnabled: $biometricLockEnabled, signOut: signOut)
                     } label: { Label("Settings and security", systemImage: "gearshape") }
                 }
+                Section("About") {
+                    LabeledContent("ServiceOps", value: AppIdentity.displayVersion)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("ServiceOps \(AppIdentity.displayVersion)")
+                }
             }
             .navigationTitle("More")
         }
@@ -1120,6 +1125,12 @@ private struct SettingsView: View {
                                     }
                                 }
                             }
+                        }
+
+                        RecordPanel(title: "About", subtitle: "Installed application") {
+                            LabeledContent("App version", value: AppIdentity.version)
+                            Divider()
+                            LabeledContent("Build", value: AppIdentity.build)
                         }
 
                         if let securityMessage {

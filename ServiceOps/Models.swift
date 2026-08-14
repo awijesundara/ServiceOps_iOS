@@ -1,5 +1,11 @@
 import Foundation
 
+enum AppIdentity {
+    static let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
+    static let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "Unknown"
+    static let displayVersion = "Version \(version) (\(build))"
+}
+
 struct ServiceOpsAPIInfo: Decodable {
     let info: Info
 
