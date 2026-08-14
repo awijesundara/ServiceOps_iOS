@@ -7,7 +7,7 @@ Native iPhone workspace for the self-hosted
 the signed-in user's ServiceOps identity; it does not embed or share a static
 API key.
 
-Current app version: **1.3.1 (build 7)**
+Current app version: **1.3.2 (build 8)**
 
 ## Screenshots
 
