@@ -2,16 +2,25 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var store = ServiceOpsStore()
-    @AppStorage("serviceops.baseURL") private var baseURL = "http://127.0.0.1"
-    @State private var apiToken = SecureSessionStore.read(account: "accessToken") ?? ""
+    @AppStorage("serviceops.baseURL") private var baseURL = "http://192.168.68.65"
+    @State private var apiToken = ""
+    @State private var hasSavedSession = SecureSessionStore.hasSession
     @State private var selectedTab: AppTab = .home
+    @AppStorage("serviceops.biometricLockEnabled") private var biometricLockEnabled = false
+    @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var notifications = PushNotificationCoordinator.shared
 
     @ViewBuilder
     var body: some View {
         if apiToken.isEmpty {
-            MobileLoginView(baseURL: $baseURL) { response in
+            MobileLoginView(
+                baseURL: $baseURL,
+                hasSavedSession: hasSavedSession,
+                unlockSession: unlockSavedSession
+            ) { response in
                 try? SecureSessionStore.save(response.accessToken, account: "accessToken")
                 try? SecureSessionStore.save(response.refreshToken, account: "refreshToken")
+                hasSavedSession = true
                 apiToken = response.accessToken
             }
         } else {
@@ -28,44 +37,119 @@ struct ContentView: View {
                 .tabItem { Label("Create", systemImage: "plus.circle") }
                 .tag(AppTab.create)
 
-            SettingsView(store: store, baseURL: $baseURL, apiToken: $apiToken) {
+            NotificationInboxView(baseURL: baseURL, token: apiToken)
+                .tabItem { Label("Inbox", systemImage: "bell") }
+                .badge(notifications.unreadCount)
+                .tag(AppTab.inbox)
+
+            MobileMoreView(store: store, baseURL: $baseURL, apiToken: $apiToken,
+                           biometricLockEnabled: $biometricLockEnabled) {
                 Task {
                     if let access = SecureSessionStore.read(account: "accessToken"),
                        let client = try? ServiceOpsAPIClient(baseURLString: baseURL, token: access) {
+                        try? await client.unregisterPushDevice(deviceId: notifications.deviceID)
                         try? await client.logout()
                     }
                     SecureSessionStore.clear()
                     apiToken = ""
+                    hasSavedSession = false
                     store.tickets = []
                 }
             }
-                .tabItem { Label("Settings", systemImage: "gearshape") }
-                .tag(AppTab.settings)
+                .tabItem { Label("More", systemImage: "square.grid.2x2") }
+                .tag(AppTab.more)
             }
             .tint(ServiceOpsTheme.nowGreen)
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .background, biometricLockEnabled {
+                    apiToken = ""
+                    hasSavedSession = SecureSessionStore.hasSession
+                }
+            }
+            .task { await configurePushNotifications() }
         }
+    }
+
+    private func configurePushNotifications() async {
+        await notifications.requestAuthorization()
+        guard let token = notifications.deviceToken else { return }
+        do {
+            let client = try ServiceOpsAPIClient(baseURLString: baseURL, token: apiToken)
+            try await client.registerPushDevice(
+                token: token, deviceId: notifications.deviceID,
+                environment: pushEnvironment
+            )
+            if let bootstrap = try? await client.bootstrap() {
+                notifications.unreadCount = bootstrap.counts.unreadNotifications
+            }
+        } catch {
+            store.errorMessage = error.localizedDescription
+        }
+    }
+
+    private var pushEnvironment: String {
+        #if DEBUG
+        "sandbox"
+        #else
+        "production"
+        #endif
+    }
+
+    private func unlockSavedSession() async throws {
+        apiToken = try await SecureSessionStore.unlockAccessToken()
+        hasSavedSession = SecureSessionStore.hasSession
     }
 }
 
 private struct MobileLoginView: View {
     @Binding var baseURL: String
+    let hasSavedSession: Bool
+    let unlockSession: () async throws -> Void
     let authenticated: (MobileAuthResponse) -> Void
     @State private var username = ""
     @State private var password = ""
     @State private var mfaCode = ""
     @State private var provider = "local"
     @State private var isSigningIn = false
+    @State private var isUnlockingSession = false
+    @State private var localAuthenticationLabel = SecureSessionStore.localAuthenticationLabel()
     @State private var errorMessage: String?
+    @State private var passkeyMessage: String?
+    @State private var isUsingPasskey = false
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("ServiceOps server") {
-                    TextField("Server URL", text: $baseURL).textInputAutocapitalization(.never).keyboardType(.URL)
+                    TextField("Server URL", text: $baseURL)
+                        .textInputAutocapitalization(.never)
+                        .textContentType(.URL)
+                        .keyboardType(.URL)
+                        .autocorrectionDisabled()
+                }
+                Section("Quick access") {
+                    Button {
+                        Task { await unlockWithLocalAuthentication() }
+                    } label: {
+                        Label(isUnlockingSession ? "Unlocking..." : localAuthenticationLabel, systemImage: "faceid")
+                    }
+                    .disabled(!hasSavedSession || isUnlockingSession || isSigningIn)
+
+                    Button {
+                        Task { await signInWithPasskey() }
+                    } label: {
+                        Label(isUsingPasskey ? "Checking Passkey…" : "Continue with Passkey",
+                              systemImage: "person.badge.key.fill")
+                    }
+                    .disabled(isUsingPasskey || isSigningIn || isUnlockingSession)
                 }
                 Section("Sign in") {
-                    TextField("Username", text: $username).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    TextField("Username", text: $username)
+                        .textInputAutocapitalization(.never)
+                        .textContentType(.username)
+                        .autocorrectionDisabled()
                     SecureField("Password", text: $password)
+                        .textContentType(.password)
                     TextField("MFA or backup code (if enabled)", text: $mfaCode).keyboardType(.numberPad)
                     Picker("Authentication", selection: $provider) {
                         Text("Local account").tag("local")
@@ -77,6 +161,17 @@ private struct MobileLoginView: View {
                 if let errorMessage { Section { Text(errorMessage).foregroundStyle(.red) } }
             }
             .navigationTitle("ServiceOps")
+            .onAppear {
+                localAuthenticationLabel = SecureSessionStore.localAuthenticationLabel()
+            }
+            .alert("Passkey", isPresented: Binding(
+                get: { passkeyMessage != nil },
+                set: { if !$0 { passkeyMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) { passkeyMessage = nil }
+            } message: {
+                Text(passkeyMessage ?? "")
+            }
         }
     }
 
@@ -90,13 +185,35 @@ private struct MobileLoginView: View {
             authenticated(response)
         } catch { errorMessage = error.localizedDescription }
     }
+
+    private func unlockWithLocalAuthentication() async {
+        isUnlockingSession = true
+        defer { isUnlockingSession = false }
+        do {
+            try await unlockSession()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func signInWithPasskey() async {
+        isUsingPasskey = true
+        defer { isUsingPasskey = false }
+        do {
+            let response = try await PasskeyManager().authenticate(baseURL: baseURL)
+            authenticated(response)
+        } catch {
+            passkeyMessage = error.localizedDescription
+        }
+    }
 }
 
-private enum AppTab: Hashable {
+enum AppTab: Hashable {
     case home
     case work
     case create
-    case settings
+    case inbox
+    case more
 }
 
 private struct HomeView: View {
@@ -747,6 +864,8 @@ private struct TicketDetailView: View {
                             .disabled(store.isSaving)
                         }
                     }
+
+                    TicketCommentsView(number: displayedTicket.number, baseURL: baseURL, token: apiToken)
                 }
                 .padding(16)
             }
@@ -884,11 +1003,42 @@ private struct NewIncidentView: View {
     }
 }
 
+private struct MobileMoreView: View {
+    @ObservedObject var store: ServiceOpsStore
+    @Binding var baseURL: String
+    @Binding var apiToken: String
+    @Binding var biometricLockEnabled: Bool
+    let signOut: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Operations") {
+                    NavigationLink { ApprovalsView(baseURL: baseURL, token: apiToken) } label: { Label("My approvals", systemImage: "checkmark.seal") }
+                    NavigationLink { KnowledgeView(baseURL: baseURL, token: apiToken) } label: { Label("Knowledge", systemImage: "book.closed") }
+                    NavigationLink { CMDBView(baseURL: baseURL, token: apiToken) } label: { Label("CMDB", systemImage: "server.rack") }
+                }
+                Section("Account") {
+                    NavigationLink {
+                        SettingsView(store: store, baseURL: $baseURL, apiToken: $apiToken,
+                                     biometricLockEnabled: $biometricLockEnabled, signOut: signOut)
+                    } label: { Label("Settings and security", systemImage: "gearshape") }
+                }
+            }
+            .navigationTitle("More")
+        }
+    }
+}
+
 private struct SettingsView: View {
     @ObservedObject var store: ServiceOpsStore
     @Binding var baseURL: String
     @Binding var apiToken: String
+    @Binding var biometricLockEnabled: Bool
     let signOut: () -> Void
+    @State private var isRegisteringPasskey = false
+    @State private var securityMessage: String?
+    @State private var passkeys: [PasskeyRecord] = []
 
     var body: some View {
         NavigationStack {
@@ -932,6 +1082,50 @@ private struct SettingsView: View {
                             }
                         }
 
+                        RecordPanel(title: "Security", subtitle: "Device authentication") {
+                            VStack(alignment: .leading, spacing: 14) {
+                                Toggle(isOn: $biometricLockEnabled) {
+                                    Label("Require biometric unlock", systemImage: "faceid")
+                                }
+                                Text("Locks ServiceOps whenever the app leaves the foreground. Your device passcode remains the recovery method.")
+                                    .font(.caption)
+                                    .foregroundStyle(ServiceOpsTheme.muted)
+
+                                Button {
+                                    Task { await registerPasskey() }
+                                } label: {
+                                    if isRegisteringPasskey {
+                                        ProgressView().frame(maxWidth: .infinity)
+                                    } else {
+                                        Label("Create passkey", systemImage: "person.badge.key.fill")
+                                            .frame(maxWidth: .infinity)
+                                    }
+                                }
+                                .buttonStyle(SecondaryButtonStyle())
+                                .disabled(isRegisteringPasskey)
+
+                                if !passkeys.isEmpty {
+                                    Divider()
+                                    ForEach(passkeys) { passkey in
+                                        HStack {
+                                            Label(passkey.name, systemImage: "key.fill")
+                                            Spacer()
+                                            Button(role: .destructive) {
+                                                Task { await deletePasskey(passkey) }
+                                            } label: {
+                                                Image(systemName: "trash")
+                                            }
+                                            .accessibilityLabel("Delete \(passkey.name)")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if let securityMessage {
+                            StatusNotice(message: securityMessage, systemImage: "key.fill", color: ServiceOpsTheme.green)
+                        }
+
                         if let message = store.connectionMessage {
                             StatusNotice(message: message, systemImage: "checkmark.seal.fill", color: ServiceOpsTheme.green)
                         }
@@ -942,6 +1136,39 @@ private struct SettingsView: View {
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .serviceOpsAlert(store: store)
+            .task { await loadPasskeys() }
+        }
+    }
+
+    private func registerPasskey() async {
+        isRegisteringPasskey = true
+        defer { isRegisteringPasskey = false }
+        do {
+            let record = try await PasskeyManager().register(baseURL: baseURL, accessToken: apiToken)
+            securityMessage = "\(record.name) is ready for passwordless sign-in."
+            await loadPasskeys()
+        } catch {
+            securityMessage = error.localizedDescription
+        }
+    }
+
+    private func loadPasskeys() async {
+        do {
+            let client = try ServiceOpsAPIClient(baseURLString: baseURL, token: apiToken)
+            passkeys = try await client.listPasskeys()
+        } catch {
+            securityMessage = error.localizedDescription
+        }
+    }
+
+    private func deletePasskey(_ passkey: PasskeyRecord) async {
+        do {
+            let client = try ServiceOpsAPIClient(baseURLString: baseURL, token: apiToken)
+            try await client.deletePasskey(id: passkey.id)
+            passkeys.removeAll { $0.id == passkey.id }
+            securityMessage = "\(passkey.name) was revoked."
+        } catch {
+            securityMessage = error.localizedDescription
         }
     }
 }
@@ -1374,7 +1601,7 @@ private enum ServiceOpsTheme {
     static let changeBrown = Color(red: 0.44, green: 0.36, blue: 0.09)
 }
 
-private enum ServiceOpsDate {
+enum ServiceOpsDate {
     static func format(_ value: String) -> String {
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

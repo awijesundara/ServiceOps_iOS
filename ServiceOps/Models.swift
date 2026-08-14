@@ -113,11 +113,107 @@ struct MobileAuthResponse: Decodable {
     let user: MobileUser?
 }
 
+struct PasskeyOptionsEnvelope<Options: Decodable>: Decodable {
+    let challengeId: String
+    let options: Options
+}
+
+struct PasskeyRegistrationOptions: Decodable {
+    let challenge: String
+    let rp: PasskeyRelyingParty
+    let user: PasskeyUser
+}
+
+struct PasskeyAuthenticationOptions: Decodable {
+    let challenge: String
+    let rpId: String
+}
+
+struct PasskeyRelyingParty: Decodable {
+    let id: String
+    let name: String
+}
+
+struct PasskeyUser: Decodable {
+    let id: String
+    let name: String
+    let displayName: String
+}
+
+struct PasskeyCredentialPayload: Encodable {
+    let id: String
+    let rawId: String
+    let type = "public-key"
+    let response: PasskeyCredentialResponse
+}
+
+struct PasskeyCredentialResponse: Encodable {
+    let clientDataJSON: String
+    let attestationObject: String?
+    let authenticatorData: String?
+    let signature: String?
+    let userHandle: String?
+}
+
+struct PasskeyRegistrationCompleteRequest: Encodable {
+    let challengeId: String
+    let credential: PasskeyCredentialPayload
+    let name: String
+}
+
+struct PasskeyAuthenticationCompleteRequest: Encodable {
+    let challengeId: String
+    let credential: PasskeyCredentialPayload
+}
+
+struct PasskeyRecord: Decodable, Identifiable {
+    let id: Int
+    let name: String
+    let createdAt: String?
+    let lastUsedAt: String?
+}
+
+struct PasskeyListResponse: Decodable { let data: [PasskeyRecord] }
+
 struct MobileUser: Codable {
     let id: Int
     let username: String
     let name: String
 }
+
+struct MobileBootstrapEnvelope: Decodable { let data: MobileBootstrap }
+struct MobileBootstrap: Decodable {
+    let user: MobileProfile
+    let assignmentGroups: [ServiceOpsPersonOrGroup]
+    let counts: MobileCounts
+    let capabilities: MobileCapabilities
+}
+struct MobileProfile: Decodable { let id: Int; let username: String; let name: String; let role: String }
+struct MobileCounts: Decodable { let pendingApprovals: Int; let unreadNotifications: Int }
+struct MobileCapabilities: Decodable { let createIncident: Bool; let manageTickets: Bool; let viewCmdb: Bool }
+
+struct MobileNotification: Identifiable, Decodable {
+    let id: Int; let title: String; let body: String; let read: Bool
+    let createdAt: String; let targetType: String?; let targetId: Int?
+}
+struct MobileApproval: Identifiable, Decodable {
+    let id: Int; let state: String; let comments: String; let gate: String; let chain: String
+    let targetType: String; let targetId: Int
+}
+struct KnowledgeArticle: Identifiable, Decodable {
+    let id: Int; let title: String; let category: String; let body: String; let createdAt: String
+}
+struct ConfigurationItemSummary: Identifiable, Decodable {
+    let id: Int; let name: String; let ciClass: String; let environment: String
+    let status: String; let ipAddress: String?
+}
+struct TicketComment: Identifiable, Decodable {
+    let id: Int; let body: String; let author: String; let createdAt: String
+}
+struct DataEnvelope<Value: Decodable>: Decodable { let data: Value }
+struct PushDeviceRequest: Encodable { let token: String; let deviceId: String; let environment: String }
+struct ApprovalDecisionRequest: Encodable { let decision: String; let comments: String }
+struct CommentRequest: Encodable { let body: String }
 
 enum TicketTypeFilter: String, CaseIterable, Identifiable {
     case all

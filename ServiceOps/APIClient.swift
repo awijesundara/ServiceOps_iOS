@@ -35,6 +35,45 @@ final class ServiceOpsAPIClient {
         try await sendNoContent(path: "/api/v1/auth/mobile/logout", method: "POST")
     }
 
+    func passkeyRegistrationOptions() async throws -> PasskeyOptionsEnvelope<PasskeyRegistrationOptions> {
+        try await send(path: "/api/v1/auth/passkeys/register/options", method: "POST", bodyData: Data(), authenticated: true)
+    }
+
+    func completePasskeyRegistration(
+        challengeId: String, credential: PasskeyCredentialPayload, name: String
+    ) async throws -> PasskeyRecord {
+        try await send(
+            path: "/api/v1/auth/passkeys/register/complete", method: "POST",
+            bodyData: JSONEncoder().encode(PasskeyRegistrationCompleteRequest(
+                challengeId: challengeId, credential: credential, name: name
+            )), authenticated: true
+        )
+    }
+
+    func passkeyAuthenticationOptions() async throws -> PasskeyOptionsEnvelope<PasskeyAuthenticationOptions> {
+        try await send(path: "/api/v1/auth/passkeys/authenticate/options", method: "POST", bodyData: Data(), authenticated: false)
+    }
+
+    func completePasskeyAuthentication(
+        challengeId: String, credential: PasskeyCredentialPayload
+    ) async throws -> MobileAuthResponse {
+        try await send(
+            path: "/api/v1/auth/passkeys/authenticate/complete", method: "POST",
+            bodyData: JSONEncoder().encode(PasskeyAuthenticationCompleteRequest(
+                challengeId: challengeId, credential: credential
+            )), authenticated: false
+        )
+    }
+
+    func listPasskeys() async throws -> [PasskeyRecord] {
+        let response: PasskeyListResponse = try await send(path: "/api/v1/auth/passkeys")
+        return response.data
+    }
+
+    func deletePasskey(id: Int) async throws {
+        try await sendNoContent(path: "/api/v1/auth/passkeys/\(id)", method: "DELETE")
+    }
+
     private func sendNoContent(path: String, method: String) async throws {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
         components?.path = joinedPath(baseURL.path, path)
@@ -85,6 +124,78 @@ final class ServiceOpsAPIClient {
             body: request,
             idempotencyKey: "ios-ticket-\(UUID().uuidString)"
         )
+    }
+
+    func bootstrap() async throws -> MobileBootstrap {
+        let response: MobileBootstrapEnvelope = try await send(path: "/api/v1/mobile/bootstrap")
+        return response.data
+    }
+
+    func registerPushDevice(token: String, deviceId: String, environment: String) async throws {
+        let _: DataEnvelope<PushRegistrationResponse> = try await send(
+            path: "/api/v1/mobile/push-devices", method: "POST",
+            body: PushDeviceRequest(token: token, deviceId: deviceId, environment: environment),
+            idempotencyKey: "push-\(deviceId)-\(token.suffix(12))"
+        )
+    }
+
+    func unregisterPushDevice(deviceId: String) async throws {
+        try await sendNoContent(path: "/api/v1/mobile/push-devices/\(deviceId.urlPathEncoded)", method: "DELETE")
+    }
+
+    func notifications() async throws -> [MobileNotification] {
+        let response: DataEnvelope<[MobileNotification]> = try await send(path: "/api/v1/mobile/notifications")
+        return response.data
+    }
+
+    func markNotificationRead(id: Int) async throws {
+        let _: DataEnvelope<NotificationReadResponse> = try await send(
+            path: "/api/v1/mobile/notifications/\(id)/read", method: "POST", bodyData: Data(), authenticated: true
+        )
+    }
+
+    func markAllNotificationsRead() async throws {
+        try await sendNoContent(path: "/api/v1/mobile/notifications/read-all", method: "POST")
+    }
+
+    func approvals() async throws -> [MobileApproval] {
+        let response: DataEnvelope<[MobileApproval]> = try await send(path: "/api/v1/mobile/approvals")
+        return response.data
+    }
+
+    func decideApproval(id: Int, decision: String, comments: String) async throws {
+        let _: DataEnvelope<ApprovalDecisionResponse> = try await send(
+            path: "/api/v1/mobile/approvals/\(id)/decide", method: "POST",
+            body: ApprovalDecisionRequest(decision: decision, comments: comments),
+            idempotencyKey: "approval-\(id)-\(UUID().uuidString)"
+        )
+    }
+
+    func knowledge(query: String = "") async throws -> [KnowledgeArticle] {
+        let response: DataEnvelope<[KnowledgeArticle]> = try await send(
+            path: "/api/v1/mobile/knowledge", queryItems: query.isEmpty ? [] : [URLQueryItem(name: "q", value: query)]
+        )
+        return response.data
+    }
+
+    func configurationItems(query: String = "") async throws -> [ConfigurationItemSummary] {
+        let response: DataEnvelope<[ConfigurationItemSummary]> = try await send(
+            path: "/api/v1/mobile/cmdb", queryItems: query.isEmpty ? [] : [URLQueryItem(name: "q", value: query)]
+        )
+        return response.data
+    }
+
+    func comments(number: String) async throws -> [TicketComment] {
+        let response: DataEnvelope<[TicketComment]> = try await send(path: "/api/v1/tickets/\(number.urlPathEncoded)/comments")
+        return response.data
+    }
+
+    func addComment(number: String, body: String) async throws -> TicketComment {
+        let response: DataEnvelope<TicketComment> = try await send(
+            path: "/api/v1/tickets/\(number.urlPathEncoded)/comments", method: "POST",
+            body: CommentRequest(body: body), idempotencyKey: "comment-\(UUID().uuidString)"
+        )
+        return response.data
     }
 
     private func send<Response: Decodable>(
@@ -200,6 +311,10 @@ final class ServiceOpsAPIClient {
         }
     }
 }
+
+private struct PushRegistrationResponse: Decodable { let deviceId: String; let enabled: Bool }
+private struct NotificationReadResponse: Decodable { let id: Int; let read: Bool }
+private struct ApprovalDecisionResponse: Decodable { let id: Int; let state: String }
 
 
 enum ServiceOpsAPIError: LocalizedError {
