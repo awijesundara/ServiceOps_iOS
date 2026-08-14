@@ -1,0 +1,41 @@
+# Xcode per-user state and generated products.
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+DerivedData/
+build/
+.build/
+*.ipa
+*.dSYM
+*.dSYM.zip
+*.xcarchive
+.swiftpm/
+
+# Apple signing identities and provisioning profiles.
+*.p12
+*.pfx
+*.cer
+*.der
+*.pem
+*.key
+*.mobileprovision
+*.provisionprofile
+
+# Local configuration and credentials.
+.env
+.env.*
+!.env.example
+*.xcconfig.local
+*.local.xcconfig
+Secrets.xcconfig
+credentials.json
+credentials.*.json
+secrets.json
+secrets.*.json
+devices.json
+
+# OS/editor state.
+.DS_Store
+*.swp
+*.swo
+*~
