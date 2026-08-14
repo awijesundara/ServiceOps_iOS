@@ -1,11 +1,13 @@
 # ServiceOps for iOS
 
+<img src="ServiceOps/Assets.xcassets/AppIcon.appiconset/AppIcon.png" width="128" alt="ServiceOps app icon">
+
 Native iPhone workspace for the self-hosted
 [ServiceOps](https://github.com/awijesundara/ServiceOps) platform. The app uses
 the signed-in user's ServiceOps identity; it does not embed or share a static
 API key.
 
-Current app version: **1.3.0 (build 6)**
+Current app version: **1.3.1 (build 7)**
 
 ## Screenshots
 
