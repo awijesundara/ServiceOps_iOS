@@ -32,6 +32,7 @@ credentials.json
 credentials.*.json
 secrets.json
 secrets.*.json
+devices.json
 
 # OS/editor state.
 .DS_Store
