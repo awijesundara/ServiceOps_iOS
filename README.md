@@ -2,6 +2,15 @@
 
 <img src="ServiceOps/Assets.xcassets/AppIcon.appiconset/AppIcon.png" width="128" alt="ServiceOps app icon">
 
+[![CI](https://github.com/awijesundara/ServiceOps_iOS/actions/workflows/ci.yml/badge.svg)](https://github.com/awijesundara/ServiceOps_iOS/actions/workflows/ci.yml)
+[![Last commit](https://img.shields.io/github/last-commit/awijesundara/ServiceOps_iOS/main)](https://github.com/awijesundara/ServiceOps_iOS/commits/main)
+[![Top language](https://img.shields.io/github/languages/top/awijesundara/ServiceOps_iOS)](https://github.com/awijesundara/ServiceOps_iOS)
+[![Code size](https://img.shields.io/github/languages/code-size/awijesundara/ServiceOps_iOS)](https://github.com/awijesundara/ServiceOps_iOS)
+[![version](https://img.shields.io/badge/version-1.3.2%20(8)-003E4C)](#)
+[![Swift](https://img.shields.io/badge/Swift-SwiftUI-F05138?logo=swift&logoColor=white)](ServiceOps)
+[![iOS](https://img.shields.io/badge/iOS-26.5%2B-000000?logo=apple&logoColor=white)](ServiceOps.xcodeproj)
+[![backend](https://img.shields.io/badge/backend-ServiceOps-0C7C68)](https://github.com/awijesundara/ServiceOps)
+
 Native iPhone workspace for the self-hosted
 [ServiceOps](https://github.com/awijesundara/ServiceOps) platform. The app uses
 the signed-in user's ServiceOps identity; it does not embed or share a static
@@ -58,3 +67,14 @@ local device inventories. The repository `.gitignore` excludes these files.
 Repository images were captured from the real iPhone simulator build with
 non-sensitive fixture records. The temporary capture fixture was removed after
 capture, so no demo-data or authentication-bypass path ships in source.
+
+## Project statistics
+
+| Metric | Value |
+|---|---|
+| Tracked files | 26 |
+| Lines of code (non-blank) | 2,475 |
+| Languages | Swift 2,475 |
+| Commits | 11 |
+
+CI builds the app for the iOS simulator with the latest stable Xcode on each push to `main`.
