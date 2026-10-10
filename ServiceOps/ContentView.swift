@@ -38,7 +38,9 @@ struct ContentView: View {
                 .tabItem { Label("Create", systemImage: "plus.circle") }
                 .tag(AppTab.create)
 
-            NotificationInboxView(baseURL: baseURL, token: apiToken)
+            NotificationInboxView(baseURL: baseURL, token: apiToken) { ticket in
+                TicketDetailView(ticket: ticket, store: store, baseURL: $baseURL, apiToken: $apiToken)
+            }
                 .tabItem { Label("Inbox", systemImage: "bell") }
                 .badge(notifications.unreadCount)
                 .tag(AppTab.inbox)
@@ -54,10 +56,7 @@ struct ContentView: View {
                     SecureSessionStore.clear()
                     apiToken = ""
                     hasSavedSession = false
-                    store.tickets = []
-                    store.capabilities = nil
-                    store.profile = nil
-                    store.serverInfo = nil
+                    store.signOut()
                 }
             }
                 .tabItem { Label("More", systemImage: "square.grid.2x2") }
@@ -67,6 +66,10 @@ struct ContentView: View {
             // One alert for the shared store error. Every tab stays alive in the TabView, so
             // per-screen alerts on the same state presented together and fought on dismissal.
             .serviceOpsAlert(store: store)
+            // The inbox resolves and opens a tapped push notification's target.
+            .onChange(of: notifications.pendingTarget, initial: true) { _, target in
+                if target != nil { selectedTab = .inbox }
+            }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .background, biometricLockEnabled {
                     apiToken = ""
@@ -81,11 +84,9 @@ struct ContentView: View {
     /// Loads the signed-in user's capabilities and badge counts, independent of
     /// push registration (simulators and denied-permission devices have no token).
     private func loadBootstrap() async {
-        guard let client = try? ServiceOpsAPIClient(baseURLString: baseURL, token: apiToken),
-              let bootstrap = try? await client.bootstrap() else { return }
-        store.capabilities = bootstrap.capabilities
-        store.profile = bootstrap.user
-        notifications.unreadCount = bootstrap.counts.unreadNotifications
+        if let unread = await store.loadBootstrap(baseURL: baseURL, token: apiToken) {
+            notifications.unreadCount = unread
+        }
     }
 
     private func configurePushNotifications() async {
@@ -519,22 +520,43 @@ enum AppTab: Hashable {
     case more
 }
 
+/// Destinations reachable from Home widgets.
+private enum HomeRoute: Hashable {
+    case tickets(TicketScope)
+    case approvals
+    case knowledge
+    case assets
+}
+
 private struct HomeView: View {
     @ObservedObject var store: ServiceOpsStore
     @Binding var baseURL: String
     @Binding var apiToken: String
     @Binding var selectedTab: AppTab
 
-    private var activeTickets: [ServiceTicket] {
-        store.tickets.filter { !["Closed", "Cancelled"].contains($0.state) }
-    }
-
-    private var majorCandidates: [ServiceTicket] {
-        store.tickets.filter { $0.type == .incident && $0.priority == "P1" }
-    }
-
+    /// Most recently updated first, so "Recent" means what it says. Falls back to comparing
+    /// the raw timestamps when the server sends a format the ISO parser doesn't accept.
     private var recentTickets: [ServiceTicket] {
-        Array(store.tickets.prefix(4))
+        let sorted = store.tickets.sorted { lhs, rhs in
+            if let left = ServiceOpsDate.date(from: lhs.updatedAt), let right = ServiceOpsDate.date(from: rhs.updatedAt) {
+                return left > right
+            }
+            return lhs.updatedAt > rhs.updatedAt
+        }
+        return Array(sorted.prefix(4))
+    }
+
+    /// `nil` until the first load finishes, so cards show a placeholder instead of a false 0.
+    private func count(_ scope: TicketScope) -> String? {
+        store.tickets.isEmpty && store.isLoadingTickets ? nil : String(store.tickets(in: scope).count)
+    }
+
+    private var groupSubtitle: String {
+        switch store.assignmentGroups.count {
+        case 0: "No assignment groups"
+        case 1: store.assignmentGroups[0].name
+        default: "\(store.assignmentGroups.count) assignment groups"
+        }
     }
 
     var body: some View {
@@ -543,73 +565,63 @@ private struct HomeView: View {
                 ServiceOpsTheme.nowBackground.ignoresSafeArea()
 
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 22) {
                         MobileHomeHeader(
-                            totalCount: store.tickets.count,
-                            activeCount: activeTickets.count,
-                            isLoading: store.isLoadingTickets
-                        ) {
-                            Task { await store.loadTickets(baseURL: baseURL, token: apiToken, filter: .all) }
-                        }
+                            profile: store.profile,
+                            avatar: store.avatarImage,
+                            openCount: store.tickets(in: .open).count,
+                            isLoading: store.isLoadingTickets,
+                            openAccount: { selectedTab = .more },
+                            refresh: { Task { await refresh() } }
+                        )
 
                         VStack(alignment: .leading, spacing: 10) {
-                            SectionLabel("Applications")
-                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                                AppletCard(
-                                    title: "My Work",
-                                    subtitle: "Tasks assigned to you",
-                                    value: "\(activeTickets.count)",
-                                    icon: "checklist",
-                                    color: ServiceOpsTheme.nowGreen
-                                ) {
-                                    selectedTab = .work
+                            SectionLabel("Your work")
+                            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
+                                NavigationLink(value: HomeRoute.tickets(.assignedToMe)) {
+                                    AppletCard(title: "My Work", subtitle: "Assigned to you",
+                                               value: count(.assignedToMe), icon: "checklist", color: ServiceOpsTheme.nowGreen)
                                 }
-
-                                AppletCard(
-                                    title: "My Group's Work",
-                                    subtitle: "Open group records",
-                                    value: "\(activeTickets.count)",
-                                    icon: "person.3.fill",
-                                    color: ServiceOpsTheme.blue
-                                ) {
-                                    selectedTab = .work
+                                NavigationLink(value: HomeRoute.tickets(.myGroups)) {
+                                    AppletCard(title: "My Group's Work", subtitle: groupSubtitle,
+                                               value: count(.myGroups), icon: "person.3.fill", color: ServiceOpsTheme.blue)
                                 }
-
-                                AppletCard(
-                                    title: "Major Incidents",
-                                    subtitle: "Critical incidents",
-                                    value: "\(majorCandidates.count)",
-                                    icon: "exclamationmark.triangle.fill",
-                                    color: .red
-                                ) {
-                                    selectedTab = .work
+                                NavigationLink(value: HomeRoute.tickets(.majorIncidents)) {
+                                    AppletCard(title: "Major Incidents", subtitle: "Open P1 incidents",
+                                               value: count(.majorIncidents), icon: "exclamationmark.triangle.fill", color: .red)
                                 }
-
-                                AppletCard(
-                                    title: "My Approvals",
-                                    subtitle: "Pending decisions",
-                                    value: "0",
-                                    icon: "hand.thumbsup.fill",
-                                    color: ServiceOpsTheme.purple,
-                                    isEnabled: false
-                                ) {}
+                                NavigationLink(value: HomeRoute.approvals) {
+                                    AppletCard(title: "My Approvals", subtitle: "Waiting for your decision",
+                                               value: store.pendingApprovals.map(String.init), icon: "hand.thumbsup.fill",
+                                               color: ServiceOpsTheme.purple)
+                                }
                             }
+                            .buttonStyle(PressableCardStyle())
                         }
 
                         VStack(alignment: .leading, spacing: 10) {
                             SectionLabel("Quick actions")
                             HStack(spacing: 12) {
-                                QuickActionButton(title: "Report issue", icon: "plus.message.fill") {
-                                    selectedTab = .create
+                                if store.capabilities?.createIncident != false {
+                                    Button { selectedTab = .create } label: {
+                                        QuickActionLabel(title: "Report issue", icon: "plus.message.fill")
+                                    }
                                 }
-                                QuickActionButton(title: "Scan asset", icon: "barcode.viewfinder") {}
-                                QuickActionButton(title: "Knowledge", icon: "book.closed.fill") {}
+                                if store.capabilities?.viewCmdb == true {
+                                    NavigationLink(value: HomeRoute.assets) {
+                                        QuickActionLabel(title: "Assets", icon: "server.rack")
+                                    }
+                                }
+                                NavigationLink(value: HomeRoute.knowledge) {
+                                    QuickActionLabel(title: "Knowledge", icon: "book.closed.fill")
+                                }
                             }
+                            .buttonStyle(PressableCardStyle())
                         }
 
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
-                                SectionLabel("Recent")
+                                SectionLabel("Recently updated")
                                 Spacer()
                                 Button("View all") { selectedTab = .work }
                                     .font(.caption.weight(.semibold))
@@ -625,9 +637,7 @@ private struct HomeView: View {
                                         .frame(minHeight: 150)
                                 } else {
                                     ForEach(recentTickets) { ticket in
-                                        NavigationLink {
-                                            TicketDetailView(ticket: ticket, store: store, baseURL: $baseURL, apiToken: $apiToken)
-                                        } label: {
+                                        NavigationLink(value: ticket) {
                                             MobileRecordCard(ticket: ticket)
                                         }
                                         .buttonStyle(.plain)
@@ -637,24 +647,82 @@ private struct HomeView: View {
                                     }
                                 }
                             }
-                            .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 16))
-                            .shadow(color: .black.opacity(0.06), radius: 16, y: 8)
+                            .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 18))
+                            .overlay(RoundedRectangle(cornerRadius: 18).stroke(ServiceOpsTheme.nowLine))
                         }
                     }
                     .padding(18)
                 }
-                .refreshable {
-                    await store.loadTickets(baseURL: baseURL, token: apiToken, filter: .all)
-                }
+                .refreshable { await refresh() }
             }
             .navigationTitle("Home")
             .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(for: HomeRoute.self) { route in
+                switch route {
+                case .tickets(let scope):
+                    ScopedTicketsView(scope: scope, store: store, baseURL: $baseURL, apiToken: $apiToken)
+                case .approvals:
+                    ApprovalsView(baseURL: baseURL, token: apiToken)
+                        // Decisions made there change the pending count on this card.
+                        .onDisappear { Task { await refreshBootstrap() } }
+                case .knowledge:
+                    KnowledgeView(baseURL: baseURL, token: apiToken)
+                case .assets:
+                    CMDBView(baseURL: baseURL, token: apiToken)
+                }
+            }
+            .navigationDestination(for: ServiceTicket.self) { ticket in
+                TicketDetailView(ticket: ticket, store: store, baseURL: $baseURL, apiToken: $apiToken)
+            }
             .task {
                 if store.tickets.isEmpty {
                     await store.loadTickets(baseURL: baseURL, token: apiToken, filter: .all)
                 }
             }
         }
+    }
+
+    private func refresh() async {
+        await store.loadTickets(baseURL: baseURL, token: apiToken, filter: .all)
+        await refreshBootstrap()
+    }
+
+    private func refreshBootstrap() async {
+        if let unread = await store.loadBootstrap(baseURL: baseURL, token: apiToken) {
+            PushNotificationCoordinator.shared.unreadCount = unread
+        }
+    }
+}
+
+/// The list behind a Home card: the same filter the card counted.
+private struct ScopedTicketsView: View {
+    let scope: TicketScope
+    @ObservedObject var store: ServiceOpsStore
+    @Binding var baseURL: String
+    @Binding var apiToken: String
+
+    var body: some View {
+        ZStack {
+            ServiceOpsTheme.nowBackground.ignoresSafeArea()
+
+            ScrollView {
+                TicketListPanel(
+                    title: scope.title,
+                    subtitle: scope.subtitle,
+                    tickets: store.tickets(in: scope),
+                    apiToken: apiToken,
+                    isLoading: store.isLoadingTickets
+                ) { ticket in
+                    TicketDetailView(ticket: ticket, store: store, baseURL: $baseURL, apiToken: $apiToken)
+                }
+                .padding(16)
+            }
+            .refreshable {
+                await store.loadTickets(baseURL: baseURL, token: apiToken, filter: .all)
+            }
+        }
+        .navigationTitle(scope.title)
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -663,25 +731,26 @@ private struct TicketsView: View {
     @Binding var baseURL: String
     @Binding var apiToken: String
     @State private var filter: TicketTypeFilter = .all
+    @State private var scope: TicketScope?
     @State private var searchText = ""
 
+    /// The tiles above the list; each one filters it.
+    private let filterTiles: [(scope: TicketScope, label: String, icon: String, color: Color)] = [
+        (.open, "Open", "tray.full", ServiceOpsTheme.green),
+        (.highRisk, "High risk", "exclamationmark.triangle", .red),
+        (.assignedToMe, "Mine", "person.crop.circle", ServiceOpsTheme.amber)
+    ]
+
     private var visibleTickets: [ServiceTicket] {
-        guard !searchText.isEmpty else { return store.tickets }
-        return store.tickets.filter { ticket in
+        let scoped = scope.map { store.tickets(in: $0) } ?? store.tickets
+        guard !searchText.isEmpty else { return scoped }
+        return scoped.filter { ticket in
             ticket.number.localizedCaseInsensitiveContains(searchText)
             || ticket.title.localizedCaseInsensitiveContains(searchText)
             || ticket.state.localizedCaseInsensitiveContains(searchText)
             || ticket.priority.localizedCaseInsensitiveContains(searchText)
             || ticket.assignmentGroupName.localizedCaseInsensitiveContains(searchText)
         }
-    }
-
-    private var openCount: Int {
-        store.tickets.filter { !["Closed", "Cancelled"].contains($0.state) }.count
-    }
-
-    private var criticalCount: Int {
-        store.tickets.filter { ["P1", "P2"].contains($0.priority) }.count
     }
 
     var body: some View {
@@ -691,20 +760,19 @@ private struct TicketsView: View {
 
                 ScrollView {
                     VStack(spacing: 14) {
-                        WorkspaceHeader(
-                            title: "My work",
-                            subtitle: "\(store.tickets.count) records",
-                            systemImage: "rectangle.grid.1x2",
-                            isLoading: store.isLoadingTickets
-                        ) {
-                            Task { await store.loadTickets(baseURL: baseURL, token: apiToken, filter: filter) }
+                        HStack(spacing: 10) {
+                            ForEach(filterTiles, id: \.scope) { tile in
+                                FilterTile(
+                                    label: tile.label,
+                                    value: store.tickets(in: tile.scope).count,
+                                    icon: tile.icon,
+                                    color: tile.color,
+                                    isSelected: scope == tile.scope
+                                ) {
+                                    withAnimation(.snappy) { scope = scope == tile.scope ? nil : tile.scope }
+                                }
+                            }
                         }
-
-                        SummaryStrip(items: [
-                            SummaryItem(title: "Open", value: String(openCount), color: ServiceOpsTheme.green, icon: "tray.full"),
-                            SummaryItem(title: "High risk", value: String(criticalCount), color: .red, icon: "exclamationmark.triangle"),
-                            SummaryItem(title: "Groups", value: String(Set(store.tickets.map(\.assignmentGroupName)).count), color: ServiceOpsTheme.amber, icon: "person.3")
-                        ])
 
                         Picker("Type", selection: $filter) {
                             ForEach(TicketTypeFilter.allCases) { filter in
@@ -712,9 +780,15 @@ private struct TicketsView: View {
                             }
                         }
                         .pickerStyle(.segmented)
-                        .padding(.horizontal, 16)
 
-                        TicketListPanel(tickets: visibleTickets, apiToken: apiToken, isLoading: store.isLoadingTickets) { ticket in
+                        TicketListPanel(
+                            title: scope?.title ?? "All records",
+                            subtitle: scope?.subtitle ?? "\(store.tickets.count) visible incidents and changes",
+                            tickets: visibleTickets,
+                            apiToken: apiToken,
+                            isLoading: store.isLoadingTickets,
+                            clearFilter: scope == nil ? nil : { withAnimation(.snappy) { scope = nil } }
+                        ) { ticket in
                             TicketDetailView(ticket: ticket, store: store, baseURL: $baseURL, apiToken: $apiToken)
                         }
                     }
@@ -724,8 +798,22 @@ private struct TicketsView: View {
                     await store.loadTickets(baseURL: baseURL, token: apiToken, filter: filter)
                 }
             }
-            .navigationTitle("ServiceOps")
+            .navigationTitle("My Work")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    if store.isLoadingTickets {
+                        ProgressView()
+                    } else {
+                        Button {
+                            Task { await store.loadTickets(baseURL: baseURL, token: apiToken, filter: filter) }
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                        }
+                        .accessibilityLabel("Refresh")
+                    }
+                }
+            }
             .searchable(text: $searchText, prompt: "Number or short description")
             .task {
                 if store.tickets.isEmpty {
@@ -739,30 +827,80 @@ private struct TicketsView: View {
     }
 }
 
+/// A count tile on My Work that toggles its filter on the list below.
+private struct FilterTile: View {
+    let label: String
+    let value: Int
+    let icon: String
+    let color: Color
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Image(systemName: icon)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(isSelected ? .white : color)
+                    Spacer()
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.white)
+                    }
+                }
+                Text("\(value)")
+                    .font(.title2.weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(isSelected ? .white : ServiceOpsTheme.ink)
+                Text(label)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(isSelected ? .white.opacity(0.9) : ServiceOpsTheme.muted)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(12)
+            .background(isSelected ? AnyShapeStyle(color.gradient) : AnyShapeStyle(ServiceOpsTheme.surface),
+                        in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(isSelected ? color : ServiceOpsTheme.nowLine))
+            .contentShape(RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(PressableCardStyle())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(label), \(value)")
+        .accessibilityHint(isSelected ? "Shows all records" : "Filters the list")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
 private struct TicketListPanel<Destination: View>: View {
+    var title = "All records"
+    var subtitle = "All visible incidents and changes"
     let tickets: [ServiceTicket]
     let apiToken: String
     let isLoading: Bool
+    var clearFilter: (() -> Void)?
     let destination: (ServiceTicket) -> Destination
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                Image(systemName: "line.3.horizontal")
-                    .frame(width: 34, height: 34)
-                    .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 4))
-                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(ServiceOpsTheme.line))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Tickets")
+                    Text(title)
                         .font(.headline)
                         .foregroundStyle(ServiceOpsTheme.tealText)
-                    Text("All visible incidents and changes")
+                    Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                if isLoading {
-                    ProgressView()
+                if let clearFilter {
+                    Button("Clear", action: clearFilter)
+                        .font(.caption.weight(.semibold))
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .accessibilityLabel("Clear filter")
                 }
             }
             .padding(14)
@@ -795,62 +933,74 @@ private struct TicketListPanel<Destination: View>: View {
                 }
             }
         }
-        .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(ServiceOpsTheme.line))
-        .shadow(color: .black.opacity(0.04), radius: 3, y: 1)
+        .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 14))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(ServiceOpsTheme.nowLine))
     }
 }
 
 private struct MobileHomeHeader: View {
-    let totalCount: Int
-    let activeCount: Int
+    let profile: MobileProfile?
+    let avatar: UIImage?
+    let openCount: Int
     let isLoading: Bool
+    let openAccount: () -> Void
     let refresh: () -> Void
 
+    private var greeting: String {
+        switch Calendar.current.component(.hour, from: .now) {
+        case 5..<12: "Good morning"
+        case 12..<17: "Good afternoon"
+        default: "Good evening"
+        }
+    }
+
+    private var summary: String {
+        [profile?.role.capitalized, "\(openCount) open records"]
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(.white.opacity(0.18))
-                    Image(systemName: "bolt.horizontal.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(.white)
-                }
-                .frame(width: 48, height: 48)
+        HStack(spacing: 14) {
+            Button(action: openAccount) {
+                ProfileAvatar(name: profile?.name, image: avatar, size: 56, onDarkBackground: true)
+                    .overlay(Circle().stroke(.white.opacity(0.7), lineWidth: 2))
+            }
+            .buttonStyle(PressableCardStyle())
+            .accessibilityLabel("Account")
+            .accessibilityHint("Opens your account and settings")
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("ServiceOps")
-                        .font(.title2.weight(.bold))
-                        .foregroundStyle(.white)
-                    Text("Mobile agent workspace")
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.78))
-                }
-
-                Spacer()
-
-                Button(action: refresh) {
-                    if isLoading {
-                        ProgressView()
-                            .tint(.white)
-                    } else {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.headline)
-                    }
-                }
-                .foregroundStyle(.white)
-                .frame(width: 38, height: 38)
-                .background(.white.opacity(0.14), in: Circle())
-                .disabled(isLoading)
-                .accessibilityLabel("Refresh")
+            VStack(alignment: .leading, spacing: 3) {
+                Text(greeting)
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.8))
+                Text(profile?.name ?? "ServiceOps")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.75))
+                    .lineLimit(1)
             }
 
-            HStack(spacing: 12) {
-                HeaderMetric(title: "Records", value: "\(totalCount)")
-                HeaderMetric(title: "Active", value: "\(activeCount)")
-                HeaderMetric(title: "Online", value: "API")
+            Spacer(minLength: 0)
+
+            Button(action: refresh) {
+                if isLoading {
+                    ProgressView()
+                        .tint(.white)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.headline)
+                }
             }
+            .foregroundStyle(.white)
+            .frame(width: 38, height: 38)
+            .background(.white.opacity(0.14), in: Circle())
+            .disabled(isLoading)
+            .accessibilityLabel("Refresh")
         }
         .padding(18)
         .background(
@@ -865,24 +1015,36 @@ private struct MobileHomeHeader: View {
     }
 }
 
-private struct HeaderMetric: View {
-    let title: String
-    let value: String
+/// The user's profile picture, or their initials when none has been uploaded.
+private struct ProfileAvatar: View {
+    let name: String?
+    let image: UIImage?
+    var size: CGFloat = 44
+    var onDarkBackground = false
+
+    private var initials: String {
+        let letters = (name ?? "").split(separator: " ").prefix(2).compactMap(\.first).map(String.init).joined()
+        return letters.isEmpty ? "?" : letters.uppercased()
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            Text(value)
-                .font(.headline.weight(.bold))
-                .monospacedDigit()
-            Text(title)
-                .font(.caption2.weight(.semibold))
-                .textCase(.uppercase)
-                .opacity(0.72)
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                ZStack {
+                    Circle().fill(onDarkBackground ? AnyShapeStyle(.white.opacity(0.2)) : AnyShapeStyle(ServiceOpsTheme.nowGreen.gradient))
+                    Text(initials)
+                        .font(.system(size: size * 0.38, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white)
+                }
+            }
         }
-        .foregroundStyle(.white)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(.white.opacity(0.13), in: RoundedRectangle(cornerRadius: 12))
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .accessibilityHidden(true)
     }
 }
 
@@ -900,31 +1062,43 @@ private struct SectionLabel: View {
     }
 }
 
+/// Press feedback for card-style buttons and links, so they read as tappable.
+private struct PressableCardStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .opacity(configuration.isPressed ? 0.85 : 1)
+            .animation(.snappy(duration: 0.15), value: configuration.isPressed)
+    }
+}
+
+/// A Home card's content; the caller wraps it in the link it opens.
 private struct AppletCard: View {
     let title: String
     let subtitle: String
-    let value: String
+    let value: String?
     let icon: String
     let color: Color
-    var isEnabled = true
-    let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Image(systemName: icon)
-                        .font(.headline)
-                        .foregroundStyle(color)
-                        .frame(width: 38, height: 38)
-                        .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-                    Spacer()
-                    Text(value)
-                        .font(.title3.weight(.bold))
-                        .monospacedDigit()
-                        .foregroundStyle(ServiceOpsTheme.ink)
-                }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                Image(systemName: icon)
+                    .font(.headline)
+                    .foregroundStyle(color)
+                    .frame(width: 38, height: 38)
+                    .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+                Spacer()
+                Text(value ?? "–")
+                    .font(.title2.weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(ServiceOpsTheme.ink)
+                    .contentTransition(.numericText())
+            }
 
+            Spacer(minLength: 0)
+
+            HStack(alignment: .bottom, spacing: 6) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
                         .font(.subheadline.weight(.bold))
@@ -936,44 +1110,45 @@ private struct AppletCard: View {
                         .foregroundStyle(ServiceOpsTheme.muted)
                         .lineLimit(2)
                 }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(color)
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, minHeight: 136, alignment: .leading)
-            .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(ServiceOpsTheme.nowLine))
-            .opacity(isEnabled ? 1 : 0.58)
-            .shadow(color: .black.opacity(0.05), radius: 14, y: 8)
         }
-        .buttonStyle(.plain)
-        .disabled(!isEnabled)
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 132, alignment: .leading)
+        .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(ServiceOpsTheme.nowLine))
+        .shadow(color: .black.opacity(0.05), radius: 12, y: 6)
+        .contentShape(RoundedRectangle(cornerRadius: 18))
+        .accessibilityElement(children: .combine)
     }
 }
 
-private struct QuickActionButton: View {
+/// A quick action's content; the caller wraps it in a button or link.
+private struct QuickActionLabel: View {
     let title: String
     let icon: String
-    let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            VStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.headline)
-                    .foregroundStyle(ServiceOpsTheme.nowGreen)
-                    .frame(width: 42, height: 42)
-                    .background(ServiceOpsTheme.nowGreen.opacity(0.12), in: Circle())
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(ServiceOpsTheme.ink)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(ServiceOpsTheme.nowLine))
+        VStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.headline)
+                .foregroundStyle(ServiceOpsTheme.nowGreen)
+                .frame(width: 42, height: 42)
+                .background(ServiceOpsTheme.nowGreen.opacity(0.12), in: Circle())
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(ServiceOpsTheme.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
-        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(ServiceOpsTheme.nowLine))
+        .contentShape(RoundedRectangle(cornerRadius: 16))
     }
 }
 
@@ -1098,14 +1273,31 @@ private struct TicketDetailView: View {
         store.selectedTicket?.id == ticket.id ? store.selectedTicket ?? ticket : ticket
     }
 
+    private var hasResolutionInformation: Bool {
+        displayedTicket.resolvedAt != nil
+            || nonempty(displayedTicket.resolutionNotes) != nil
+            || nonempty(displayedTicket.closureCategory) != nil
+            || nonempty(displayedTicket.closureSubcategory) != nil
+    }
+
     var body: some View {
         ZStack {
             ServiceOpsTheme.nowBackground.ignoresSafeArea()
 
             ScrollView {
                 VStack(spacing: 16) {
-                    RecordToolbar(ticket: displayedTicket, isSaving: store.isSaving) {
+                    RecordToolbar(ticket: displayedTicket, isSaving: store.isSaving, canSave: hasChanges && displayedTicket.details?.canManage != false) {
                         Task { await saveChanges() }
+                    }
+
+                    if let message = store.errorMessage {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(message, systemImage: "exclamationmark.triangle")
+                                .font(.subheadline).foregroundStyle(.red)
+                            Button("Retry loading ticket") {
+                                Task { await store.refreshTicket(ticket, baseURL: baseURL, token: apiToken) }
+                            }
+                        }
                     }
 
                     StateTrack(currentState: displayedTicket.state)
@@ -1129,23 +1321,55 @@ private struct TicketDetailView: View {
 
                             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                                 FactCell(label: "Type", value: displayedTicket.type.rawValue.capitalized, icon: "square.stack.3d.up")
+                                FactCell(label: "State", value: displayedTicket.state, icon: "point.3.connected.trianglepath.dotted")
+                                FactCell(label: "Priority", value: displayedTicket.priority, icon: "exclamationmark.triangle")
                                 FactCell(label: "Category", value: displayedTicket.category, icon: "tag")
+                                FactCell(label: "Subcategory", value: displayedTicket.subcategory.flatMap { $0.isEmpty ? nil : $0 } ?? "Not recorded", icon: "tag.fill")
                                 FactCell(label: "Assignment group", value: displayedTicket.assignmentGroupName, icon: "person.3")
                                 FactCell(label: "Assigned to", value: displayedTicket.assigneeName, icon: "person.crop.circle")
                                 FactCell(label: "Opened", value: ServiceOpsDate.format(displayedTicket.openedAt), icon: "calendar")
                                 FactCell(label: "Updated", value: ServiceOpsDate.format(displayedTicket.updatedAt), icon: "clock")
+                                if let resolvedAt = displayedTicket.resolvedAt {
+                                    FactCell(label: "Resolved", value: ServiceOpsDate.format(resolvedAt), icon: "checkmark.circle")
+                                }
                             }
                         }
                     }
 
-                    // Where the ticket's devices sit, like the web ticket page's rack panel.
-                    TicketRackPlacementPanel(number: displayedTicket.number, baseURL: baseURL, token: apiToken,
-                                             canViewCMDB: store.capabilities?.viewCmdb ?? false)
+                    if let details = displayedTicket.details {
+                        TicketInformationView(details: details, baseURL: baseURL, token: apiToken)
+                    } else if store.errorMessage == nil {
+                        Text("Additional ticket information requires a ServiceOps server that publishes ticket details.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
 
+                    if hasResolutionInformation {
+                        RecordPanel(title: "Resolution information", subtitle: "Closure details from the ticket") {
+                            VStack(alignment: .leading, spacing: 12) {
+                                LabeledContent("Closure category", value: nonempty(displayedTicket.closureCategory) ?? "Not recorded")
+                                LabeledContent("Closure subcategory", value: nonempty(displayedTicket.closureSubcategory) ?? "Not recorded")
+                                if let notes = nonempty(displayedTicket.resolutionNotes) {
+                                    Divider()
+                                    Text("Resolution notes")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(ServiceOpsTheme.muted)
+                                    Text(notes)
+                                        .font(.subheadline)
+                                        .foregroundStyle(ServiceOpsTheme.ink)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                        }
+                    }
+
+                    if displayedTicket.details?.canManage == false {
+                        Label("This ticket is read-only for your account.", systemImage: "lock")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
                     RecordPanel(title: "Update record", subtitle: "State and priority") {
                         VStack(spacing: 14) {
                             Picker("State", selection: $selectedState) {
-                                ForEach(TicketState.options(from: displayedTicket.state), id: \.self) { state in
+                                ForEach(displayedTicket.details.map { $0.allowedStates.contains(displayedTicket.state) ? $0.allowedStates : [displayedTicket.state] + $0.allowedStates } ?? TicketState.options(from: displayedTicket.state), id: \.self) { state in
                                     Text(state).tag(state)
                                 }
                             }
@@ -1167,7 +1391,7 @@ private struct TicketDetailView: View {
                             }
                             .buttonStyle(PrimaryButtonStyle())
                             // The server rejects an empty PATCH body, so require an actual edit.
-                            .disabled(store.isSaving || !hasChanges)
+                            .disabled(store.isSaving || !hasChanges || displayedTicket.details?.canManage == false)
                         }
                     }
 
@@ -1185,6 +1409,7 @@ private struct TicketDetailView: View {
         }
         .navigationTitle(displayedTicket.number)
         .navigationBarTitleDisplayMode(.inline)
+        .refreshable { await store.refreshTicket(ticket, baseURL: baseURL, token: apiToken) }
         .task {
             await store.refreshTicket(ticket, baseURL: baseURL, token: apiToken)
         }
@@ -1197,6 +1422,10 @@ private struct TicketDetailView: View {
 
     private var hasChanges: Bool {
         selectedState != displayedTicket.state || selectedPriority != displayedTicket.priority
+    }
+
+    private func nonempty(_ value: String?) -> String? {
+        value.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
     }
 
     private func saveChanges() async {
@@ -1330,9 +1559,17 @@ private struct MobileMoreView: View {
             List {
                 if let profile = store.profile {
                     Section("Signed in") {
-                        LabeledContent("Name", value: profile.name)
-                        LabeledContent("Username", value: profile.username)
-                        LabeledContent("Role", value: profile.role.capitalized)
+                        HStack(spacing: 14) {
+                            ProfileAvatar(name: profile.name, image: store.avatarImage, size: 60)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(profile.name).font(.headline)
+                                Text("@\(profile.username)").font(.subheadline).foregroundStyle(.secondary)
+                                Text(profile.role.capitalized).font(.caption.weight(.semibold))
+                                    .foregroundStyle(ServiceOpsTheme.greenText)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                        .accessibilityElement(children: .combine)
                     }
                 }
                 Section("Work and reference") {
@@ -1566,53 +1803,10 @@ private struct WorkspaceHeader: View {
     }
 }
 
-private struct SummaryStrip: View {
-    let items: [SummaryItem]
-
-    var body: some View {
-        HStack(spacing: 10) {
-            ForEach(items) { item in
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Image(systemName: item.icon)
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(item.color)
-                        Spacer()
-                    }
-                    Text(item.value)
-                        .font(.title2.weight(.bold))
-                        .monospacedDigit()
-                        .foregroundStyle(ServiceOpsTheme.ink)
-                    Text(item.title)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(ServiceOpsTheme.muted)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-                .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 6))
-                .overlay(alignment: .top) {
-                    Rectangle()
-                        .fill(item.color)
-                        .frame(height: 3)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(ServiceOpsTheme.line))
-            }
-        }
-    }
-}
-
-private struct SummaryItem: Identifiable {
-    let id = UUID()
-    let title: String
-    let value: String
-    let color: Color
-    let icon: String
-}
-
 private struct RecordToolbar: View {
     let ticket: ServiceTicket
     let isSaving: Bool
+    var canSave = true
     let save: () -> Void
 
     var body: some View {
@@ -1640,7 +1834,7 @@ private struct RecordToolbar: View {
                 }
             }
             .buttonStyle(IconButtonStyle())
-            .disabled(isSaving)
+            .disabled(isSaving || !canSave)
             .accessibilityLabel("Save changes")
         }
         .padding(12)
@@ -1967,14 +2161,16 @@ enum ServiceOpsTheme {
 }
 
 enum ServiceOpsDate {
-    static func format(_ value: String) -> String {
+    static func date(from value: String) -> Date? {
         let isoFormatter = ISO8601DateFormatter()
         isoFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let fallbackFormatter = ISO8601DateFormatter()
         fallbackFormatter.formatOptions = [.withInternetDateTime]
+        return isoFormatter.date(from: value) ?? fallbackFormatter.date(from: value)
+    }
 
-        let date = isoFormatter.date(from: value) ?? fallbackFormatter.date(from: value)
-        guard let date else { return value }
+    static func format(_ value: String) -> String {
+        guard let date = date(from: value) else { return value }
 
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM d, HH:mm"

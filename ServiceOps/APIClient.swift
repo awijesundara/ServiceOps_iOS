@@ -142,6 +142,14 @@ final class ServiceOpsAPIClient {
         try await send(path: "/api/v1/tickets/\(number.urlPathEncoded)")
     }
 
+    /// Notifications reference tickets by ID, not number. The list cursor returns tickets with
+    /// `id > cursor` ordered by ID, so a one-row page after `id - 1` is exactly that ticket when
+    /// the user can see it. Returns `nil` when it's not visible to this account.
+    func ticket(id: Int) async throws -> ServiceTicket? {
+        let page = try await listTickets(limit: 1, cursor: id - 1)
+        return page.data.first { $0.id == id }
+    }
+
     func createIncident(_ draft: IncidentDraft) async throws -> TicketEnvelope {
         try await send(
             path: "/api/v1/incidents",
@@ -164,6 +172,14 @@ final class ServiceOpsAPIClient {
     func bootstrap() async throws -> MobileBootstrap {
         let response: MobileBootstrapEnvelope = try await send(path: "/api/v1/mobile/bootstrap")
         return response.data
+    }
+
+    /// The signed-in user's profile picture (PNG or JPEG). Only call when bootstrap reports `hasAvatar`.
+    func profileAvatar() async throws -> Data {
+        try await perform(
+            path: "/api/v1/mobile/profile/avatar", method: "GET", queryItems: [], bodyData: nil,
+            idempotencyKey: nil, authenticated: true, allowRefresh: true
+        )
     }
 
     func registerPushDevice(token: String, deviceId: String, environment: String) async throws {

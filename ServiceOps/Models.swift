@@ -39,9 +39,16 @@ struct ServiceTicket: Identifiable, Hashable, Decodable {
     let state: String
     let priority: String
     let category: String
+    let subcategory: String?
+    let closureCategory: String?
+    let closureSubcategory: String?
+    let resolutionNotes: String?
     let openedAt: String
     let updatedAt: String
+    let resolvedAt: String?
     let internalDetails: InternalDetails?
+    let details: TicketDetails?
+    let configurationItems: [TicketConfigurationItem]?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -52,9 +59,16 @@ struct ServiceTicket: Identifiable, Hashable, Decodable {
         case state
         case priority
         case category
+        case subcategory
+        case closureCategory
+        case closureSubcategory
+        case resolutionNotes
         case openedAt
         case updatedAt
+        case resolvedAt
         case internalDetails = "internal"
+        case details
+        case configurationItems
     }
 
     var assignmentGroupName: String {
@@ -63,6 +77,57 @@ struct ServiceTicket: Identifiable, Hashable, Decodable {
 
     var assigneeName: String {
         internalDetails?.assignedTo?.name ?? "Unassigned"
+    }
+
+    var isActive: Bool {
+        !["Closed", "Cancelled"].contains(state)
+    }
+}
+
+/// Filters behind the Home and My Work widgets, so each count matches the list it opens.
+enum TicketScope: String, CaseIterable, Identifiable, Hashable {
+    case open
+    case assignedToMe
+    case myGroups
+    case majorIncidents
+    case highRisk
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .open: "Open"
+        case .assignedToMe: "Assigned to me"
+        case .myGroups: "My group's work"
+        case .majorIncidents: "Major incidents"
+        case .highRisk: "High risk"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .open: "Records that aren't closed or cancelled"
+        case .assignedToMe: "Open records assigned to you"
+        case .myGroups: "Open records for your assignment groups"
+        case .majorIncidents: "Open P1 incidents"
+        case .highRisk: "Open P1 and P2 records"
+        }
+    }
+
+    func matches(_ ticket: ServiceTicket, userID: Int?, groupIDs: Set<Int>) -> Bool {
+        guard ticket.isActive else { return false }
+        switch self {
+        case .open:
+            return true
+        case .assignedToMe:
+            return userID != nil && ticket.internalDetails?.assignedTo?.id == userID
+        case .myGroups:
+            return ticket.internalDetails?.assignmentGroup.map { groupIDs.contains($0.id) } ?? false
+        case .majorIncidents:
+            return ticket.type == .incident && ticket.priority == "P1"
+        case .highRisk:
+            return ["P1", "P2"].contains(ticket.priority)
+        }
     }
 }
 
@@ -210,7 +275,11 @@ struct MobileBootstrap: Decodable {
     let counts: MobileCounts
     let capabilities: MobileCapabilities
 }
-struct MobileProfile: Decodable { let id: Int; let username: String; let name: String; let role: String }
+struct MobileProfile: Decodable {
+    let id: Int; let username: String; let name: String; let role: String
+    /// Missing on servers that predate mobile profile pictures.
+    let hasAvatar: Bool?
+}
 struct MobileCounts: Decodable { let pendingApprovals: Int; let unreadNotifications: Int }
 struct MobileCapabilities: Decodable { let createIncident: Bool; let manageTickets: Bool; let viewCmdb: Bool }
 
@@ -243,7 +312,7 @@ struct ConfigurationItemSummary: Identifiable, Decodable {
     let rack: AssetRackLocation?
 }
 
-struct AssetRackLocation: Decodable {
+struct AssetRackLocation: Hashable, Decodable {
     let id: Int?
     let capacity: Int?
     let name: String
@@ -412,4 +481,46 @@ struct TicketRackPlacementsEnvelope: Decodable {
     struct Meta: Decodable { let count: Int; let openOnAffectedCis: Bool }
     let data: [TicketRackPlacement]
     let meta: Meta
+}
+
+/// Versioned, authorized Web UI ticket information. Optional on older servers.
+struct TicketDetails: Hashable, Decodable {
+    let schemaVersion: Int
+    let configurationItems: [TicketConfigurationItem]
+    let sections: [TicketDetailSection]
+    let canManage: Bool
+    let allowedStates: [String]
+}
+
+struct TicketConfigurationItem: Hashable, Decodable, Identifiable {
+    let id: Int
+    let name: String
+    let ciClass: String
+    let environment: String
+    let status: String
+    let relationshipRole: String
+    let ipAddress: String?
+    let location: String?
+    let serialNumber: String?
+    let vendor: String?
+    let model: String?
+    let description: String?
+    let rack: AssetRackLocation?
+    /// One CI can have several relationship roles on the same ticket.
+    var relationshipID: String { "\(id):\(relationshipRole)" }
+}
+
+struct TicketDetailSection: Hashable, Decodable, Identifiable {
+    let id: String
+    let title: String
+    let entries: [TicketDetailEntry]
+}
+struct TicketDetailEntry: Hashable, Decodable, Identifiable {
+    let id: String
+    let title: String
+    let fields: [TicketDetailField]
+}
+struct TicketDetailField: Hashable, Decodable {
+    let label: String
+    let value: String?
 }

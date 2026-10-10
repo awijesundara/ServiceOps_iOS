@@ -1,12 +1,32 @@
 import QuickLook
 import SwiftUI
 
-struct NotificationInboxView: View {
+/// Where tapping a notification leads, from the server's `target_type`/`target_id`.
+private enum NotificationRoute: Hashable {
+    case ticket(ServiceTicket)
+    case approvals
+
+    /// Target types the app has a screen for; others (client tickets, RITMs, contracts,
+    /// enterprise records) are only marked read.
+    static func isSupported(_ targetType: String?, targetID: Int?) -> Bool {
+        switch targetType {
+        case "ticket": targetID != nil
+        case "approval_queue": true
+        default: false
+        }
+    }
+}
+
+struct NotificationInboxView<TicketDestination: View>: View {
     let baseURL: String
     let token: String
+    @ViewBuilder let ticketDestination: (ServiceTicket) -> TicketDestination
+    @ObservedObject private var push = PushNotificationCoordinator.shared
     @State private var rows: [MobileNotification] = []
     @State private var errorMessage: String?
     @State private var loading = false
+    @State private var route: NotificationRoute?
+    @State private var openingID: Int?
 
     var body: some View {
         NavigationStack {
@@ -15,7 +35,9 @@ struct NotificationInboxView: View {
                 else if rows.isEmpty { ContentUnavailableView("No notifications", systemImage: "bell.slash") }
                 else {
                     List(rows) { row in
-                        Button { Task { await markRead(row) } } label: {
+                        Button {
+                            Task { await open(notificationID: row.id, targetType: row.targetType, targetID: row.targetId) }
+                        } label: {
                             HStack(alignment: .top, spacing: 12) {
                                 Circle().fill(row.read ? .clear : .blue).frame(width: 8, height: 8).padding(.top, 7)
                                 VStack(alignment: .leading, spacing: 5) {
@@ -23,15 +45,37 @@ struct NotificationInboxView: View {
                                     Text(row.body).font(.subheadline).foregroundStyle(.secondary).lineLimit(3)
                                     Text(ServiceOpsDate.format(row.createdAt)).font(.caption).foregroundStyle(.tertiary)
                                 }
+                                Spacer(minLength: 0)
+                                if openingID == row.id {
+                                    ProgressView().padding(.top, 4)
+                                } else if NotificationRoute.isSupported(row.targetType, targetID: row.targetId) {
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption.weight(.semibold)).foregroundStyle(.tertiary).padding(.top, 6)
+                                }
                             }
-                        }.buttonStyle(.plain)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(openingID != nil)
                     }.listStyle(.plain)
                 }
             }
             .navigationTitle("Notifications")
+            .navigationDestination(item: $route) { route in
+                switch route {
+                case .ticket(let ticket): ticketDestination(ticket)
+                case .approvals: ApprovalsView(baseURL: baseURL, token: token)
+                }
+            }
             .toolbar { Button("Read all") { Task { await markAllRead() } }.disabled(rows.allSatisfy(\.read)) }
             .refreshable { await load() }
             .task { await load() }
+            // A tapped push notification opens its target here, including one tapped before launch.
+            .onChange(of: push.pendingTarget, initial: true) { _, target in
+                guard let target else { return }
+                push.pendingTarget = nil
+                Task { await open(notificationID: target.notificationID, targetType: target.targetType, targetID: target.targetID) }
+            }
             .alert("ServiceOps", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
                 Button("OK", role: .cancel) {}
             } message: { Text(errorMessage ?? "") }
@@ -45,9 +89,34 @@ struct NotificationInboxView: View {
             PushNotificationCoordinator.shared.unreadCount = rows.filter { !$0.read }.count
         } catch { errorMessage = error.localizedDescription }
     }
-    private func markRead(_ row: MobileNotification) async {
-        do { try await ServiceOpsAPIClient(baseURLString: baseURL, token: token).markNotificationRead(id: row.id); await load() }
-        catch { errorMessage = error.localizedDescription }
+
+    /// Marks the notification read, then navigates to what it was about.
+    private func open(notificationID: Int?, targetType: String?, targetID: Int?) async {
+        openingID = notificationID
+        defer { openingID = nil }
+        do {
+            let client = try ServiceOpsAPIClient(baseURLString: baseURL, token: token)
+            if let notificationID {
+                // Navigation shouldn't depend on the read receipt succeeding.
+                try? await client.markNotificationRead(id: notificationID)
+            }
+            switch targetType {
+            case "ticket":
+                guard let targetID else { break }
+                if let ticket = try await client.ticket(id: targetID) {
+                    route = .ticket(ticket)
+                } else {
+                    errorMessage = "This ticket is no longer available to your account."
+                }
+            case "approval_queue":
+                route = .approvals
+            default:
+                break
+            }
+        } catch {
+            errorMessage = (error as? ServiceOpsAPIError)?.serverMessage ?? error.localizedDescription
+        }
+        await load()
     }
     private func markAllRead() async {
         do { try await ServiceOpsAPIClient(baseURLString: baseURL, token: token).markAllNotificationsRead(); await load() }
@@ -267,5 +336,138 @@ private struct ChangeTaskDetailView: View {
             note = ""
             onUpdate(updated)
         } catch { errorMessage = error.localizedDescription }
+    }
+}
+
+/// Read-only sections come from the same ticket relationships used by the Web UI.
+struct TicketInformationView: View {
+    let details: TicketDetails
+    let baseURL: String
+    let token: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Configuration items and services").font(.headline)
+                if details.configurationItems.isEmpty {
+                    Text("No linked configuration items are available to your account.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+                ForEach(details.configurationItems, id: \.relationshipID) { item in
+                    ConfigurationItemRow(item: item, baseURL: baseURL, token: token)
+                }
+            }
+            .padding().background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
+
+            ForEach(details.sections) { section in
+                DisclosureGroup {
+                    if section.entries.isEmpty {
+                        Text("No records").font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    ForEach(section.entries) { entry in
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text(entry.title).font(.subheadline.weight(.semibold))
+                            ForEach(Array(entry.fields.enumerated()), id: \.offset) { _, field in
+                                detailField(field.label, value: field.value)
+                            }
+                        }.padding(.vertical, 8)
+                        if entry.id != section.entries.last?.id { Divider() }
+                    }
+                } label: {
+                    HStack {
+                        Text(section.title).font(.headline)
+                        Spacer()
+                        Text(String(section.entries.count)).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .padding().background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
+    }
+
+    private func detailField(_ label: String, value: String?) -> some View {
+        CIDetailField(label: label, value: value)
+    }
+}
+
+private struct CIDetailField: View {
+    let label: String
+    let value: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(value.flatMap { $0.isEmpty ? nil : $0 } ?? "Not recorded")
+                .font(.subheadline).textSelection(.enabled)
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// One linked CI. A rack-mounted CI shows a location link under its name that opens the
+/// full rack view with the device highlighted. The row is custom rather than a DisclosureGroup
+/// so the link isn't nested inside the disclosure toggle button.
+private struct ConfigurationItemRow: View {
+    let item: TicketConfigurationItem
+    let baseURL: String
+    let token: String
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button {
+                withAnimation { isExpanded.toggle() }
+            } label: {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(item.name).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                        Text(item.relationshipRole).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+
+            if let rack = item.rack, let rackID = rack.id {
+                NavigationLink {
+                    ServerRackView(rackID: rackID, selectedAssetID: item.id, baseURL: baseURL, token: token)
+                } label: {
+                    Label(locationSummary(rack), systemImage: "mappin.and.ellipse")
+                        .font(.caption.weight(.medium))
+                }
+                .accessibilityHint("Opens the rack view with this device highlighted")
+            }
+
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 10) {
+                    CIDetailField(label: "Class", value: item.ciClass)
+                    CIDetailField(label: "Environment", value: item.environment)
+                    CIDetailField(label: "Status", value: item.status)
+                    CIDetailField(label: "IP address", value: item.ipAddress)
+                    CIDetailField(label: "Location", value: item.location)
+                    CIDetailField(label: "Serial number", value: item.serialNumber)
+                    CIDetailField(label: "Vendor", value: item.vendor)
+                    CIDetailField(label: "Model", value: item.model)
+                    CIDetailField(label: "Description", value: item.description)
+                    if let rack = item.rack {
+                        CIDetailField(label: "Site", value: rack.site)
+                        CIDetailField(label: "Rack", value: rack.name)
+                        CIDetailField(label: "Position", value: rack.position.map { String(format: "U%g", $0) })
+                        CIDetailField(label: "Height", value: rack.uHeight.map { "\($0) U" })
+                        CIDetailField(label: "Face", value: rack.face?.capitalized)
+                    }
+                }.padding(.top, 8)
+            }
+        }
+    }
+
+    /// e.g. "Rack A12 · U8.5"
+    private func locationSummary(_ rack: AssetRackLocation) -> String {
+        [rack.name, rack.position.map { String(format: "U%g", $0) }]
+            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }

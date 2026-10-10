@@ -46,6 +46,7 @@ The current simulator captures use non-sensitive example records. Optional rack 
 - Passkey registration and passwordless sign-in.
 - Home dashboard, assigned incidents and changes, record search and filtering.
 - Incident creation, record updates, work notes, and activity history.
+- Linked ticket CIs and services, exact rack destinations, record fields, change governance, reviews, SLAs, approvals, tasks and related records. Detail sections follow server permissions and support older servers.
 - Approval actions, knowledge search, searchable assets with site/rack/hardware details, and connection diagnostics.
 - Front/rear rack elevations with selected-device highlighting, recorded capacity, placement warnings and optional server-provided totals.
 - APNs device registration, real-time ticket/approval/security alerts, and an
