@@ -1,8 +1,9 @@
+import AuthenticationServices
 import SwiftUI
 
 struct ContentView: View {
     @StateObject private var store = ServiceOpsStore()
-    @AppStorage("serviceops.baseURL") private var baseURL = "http://192.168.68.65"
+    @AppStorage("serviceops.baseURL") private var baseURL = "https://serviceops.wijesundara.com"
     @State private var apiToken = ""
     @State private var hasSavedSession = SecureSessionStore.hasSession
     @State private var selectedTab: AppTab = .home
@@ -54,20 +55,37 @@ struct ContentView: View {
                     apiToken = ""
                     hasSavedSession = false
                     store.tickets = []
+                    store.capabilities = nil
+                    store.profile = nil
+                    store.serverInfo = nil
                 }
             }
                 .tabItem { Label("More", systemImage: "square.grid.2x2") }
                 .tag(AppTab.more)
             }
             .tint(ServiceOpsTheme.nowGreen)
+            // One alert for the shared store error. Every tab stays alive in the TabView, so
+            // per-screen alerts on the same state presented together and fought on dismissal.
+            .serviceOpsAlert(store: store)
             .onChange(of: scenePhase) { _, phase in
                 if phase == .background, biometricLockEnabled {
                     apiToken = ""
                     hasSavedSession = SecureSessionStore.hasSession
                 }
             }
+            .task { await loadBootstrap() }
             .task { await configurePushNotifications() }
         }
+    }
+
+    /// Loads the signed-in user's capabilities and badge counts, independent of
+    /// push registration (simulators and denied-permission devices have no token).
+    private func loadBootstrap() async {
+        guard let client = try? ServiceOpsAPIClient(baseURLString: baseURL, token: apiToken),
+              let bootstrap = try? await client.bootstrap() else { return }
+        store.capabilities = bootstrap.capabilities
+        store.profile = bootstrap.user
+        notifications.unreadCount = bootstrap.counts.unreadNotifications
     }
 
     private func configurePushNotifications() async {
@@ -79,9 +97,6 @@ struct ContentView: View {
                 token: token, deviceId: notifications.deviceID,
                 environment: pushEnvironment
             )
-            if let bootstrap = try? await client.bootstrap() {
-                notifications.unreadCount = bootstrap.counts.unreadNotifications
-            }
         } catch {
             store.errorMessage = error.localizedDescription
         }
@@ -102,93 +117,305 @@ struct ContentView: View {
 }
 
 private struct MobileLoginView: View {
+    /// A sign-in attempt that the server accepted except for the MFA code.
+    private enum PendingVerification {
+        case password
+        case cloudflareAccess(assertion: String)
+    }
+
+    /// Why the Cloudflare Access sheet is shown: to pass an Access gate in front of the
+    /// API, or to sign in to ServiceOps with the Access identity.
+    private enum AccessPurpose: Identifiable {
+        case gate(host: String)
+        case identity(host: String)
+        var id: String {
+            switch self {
+            case .gate(let host): "gate-\(host)"
+            case .identity(let host): "identity-\(host)"
+            }
+        }
+        var host: String {
+            switch self {
+            case .gate(let host), .identity(let host): host
+            }
+        }
+    }
+
     @Binding var baseURL: String
     let hasSavedSession: Bool
     let unlockSession: () async throws -> Void
     let authenticated: (MobileAuthResponse) -> Void
+    @Environment(\.webAuthenticationSession) private var webAuthenticationSession
+    @AppStorage("serviceops.lastPasswordProvider") private var lastPasswordProvider = "local"
+    @State private var methods: MobileAuthMethods?
+    @State private var isDiscovering = false
+    @State private var accessGateHost: String?
+    @State private var accessPurpose: AccessPurpose?
     @State private var username = ""
     @State private var password = ""
     @State private var mfaCode = ""
     @State private var provider = "local"
-    @State private var isSigningIn = false
-    @State private var isUnlockingSession = false
+    @State private var pendingVerification: PendingVerification?
+    @State private var isBusy = false
     @State private var localAuthenticationLabel = SecureSessionStore.localAuthenticationLabel()
     @State private var errorMessage: String?
-    @State private var passkeyMessage: String?
-    @State private var isUsingPasskey = false
+    @FocusState private var mfaFieldFocused: Bool
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("ServiceOps server") {
+                Section {
                     TextField("Server URL", text: $baseURL)
                         .textInputAutocapitalization(.never)
                         .textContentType(.URL)
                         .keyboardType(.URL)
                         .autocorrectionDisabled()
+                    serverStatus
+                } header: {
+                    Text("ServiceOps server")
                 }
-                Section("Quick access") {
-                    Button {
-                        Task { await unlockWithLocalAuthentication() }
-                    } label: {
-                        Label(isUnlockingSession ? "Unlocking..." : localAuthenticationLabel, systemImage: "faceid")
-                    }
-                    .disabled(!hasSavedSession || isUnlockingSession || isSigningIn)
 
-                    Button {
-                        Task { await signInWithPasskey() }
-                    } label: {
-                        Label(isUsingPasskey ? "Checking Passkey…" : "Continue with Passkey",
-                              systemImage: "person.badge.key.fill")
+                if pendingVerification != nil {
+                    verificationSection
+                } else if accessGateHost == nil {
+                    if hasSavedSession {
+                        Section("Quick access") {
+                            Button {
+                                Task { await unlockWithLocalAuthentication() }
+                            } label: {
+                                Label(localAuthenticationLabel, systemImage: "faceid")
+                            }
+                            .disabled(isBusy)
+                        }
                     }
-                    .disabled(isUsingPasskey || isSigningIn || isUnlockingSession)
-                }
-                Section("Sign in") {
-                    TextField("Username", text: $username)
-                        .textInputAutocapitalization(.never)
-                        .textContentType(.username)
-                        .autocorrectionDisabled()
-                    SecureField("Password", text: $password)
-                        .textContentType(.password)
-                    TextField("MFA or backup code (if enabled)", text: $mfaCode).keyboardType(.numberPad)
-                    Picker("Authentication", selection: $provider) {
-                        Text("Local account").tag("local")
-                        Text("Directory / LDAP").tag("ldap")
+                    if let methods {
+                        signInSections(for: methods)
                     }
-                    Button(isSigningIn ? "Signing in…" : "Sign in") { Task { await signIn() } }
-                        .disabled(isSigningIn || username.isEmpty || password.isEmpty)
                 }
+
                 if let errorMessage { Section { Text(errorMessage).foregroundStyle(.red) } }
             }
             .navigationTitle("ServiceOps")
-            .onAppear {
-                localAuthenticationLabel = SecureSessionStore.localAuthenticationLabel()
+            .disabled(isBusy)
+            .overlay { if isBusy { ProgressView().controlSize(.large) } }
+            .onAppear { localAuthenticationLabel = SecureSessionStore.localAuthenticationLabel() }
+            .task(id: baseURL) {
+                // Debounce typing in the server field before probing the server.
+                try? await Task.sleep(for: .milliseconds(400))
+                guard !Task.isCancelled else { return }
+                await discoverMethods()
             }
-            .alert("Passkey", isPresented: Binding(
-                get: { passkeyMessage != nil },
-                set: { if !$0 { passkeyMessage = nil } }
-            )) {
-                Button("OK", role: .cancel) { passkeyMessage = nil }
-            } message: {
-                Text(passkeyMessage ?? "")
+            .sheet(item: $accessPurpose) { purpose in
+                CloudflareAccessSignInView(host: purpose.host) { token in
+                    accessPurpose = nil
+                    guard let token else { return }
+                    CloudflareAccessSession.save(token, for: purpose.host)
+                    Task {
+                        switch purpose {
+                        case .gate: await discoverMethods()
+                        case .identity: await completeCloudflareAccessSignIn(assertion: token)
+                        }
+                    }
+                }
+                .interactiveDismissDisabled()
             }
         }
     }
 
-    private func signIn() async {
-        isSigningIn = true
-        defer { isSigningIn = false }
+    // MARK: Sections
+
+    @ViewBuilder
+    private var serverStatus: some View {
+        if isDiscovering {
+            Label("Checking server…", systemImage: "antenna.radiowaves.left.and.right")
+                .font(.footnote).foregroundStyle(.secondary)
+        } else if let host = accessGateHost {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("\(host) is protected by Cloudflare Access.", systemImage: "lock.shield")
+                    .font(.footnote)
+                Button("Sign in to Cloudflare Access") { accessPurpose = .gate(host: host) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func signInSections(for methods: MobileAuthMethods) -> some View {
+        if methods.keycloak || methods.cloudflareAccess || methods.passkeys {
+            Section("Single sign-on") {
+                if methods.keycloak {
+                    Button { Task { await signInWithKeycloak() } } label: {
+                        Label("Sign in with your organization", systemImage: "building.2")
+                    }
+                }
+                if methods.cloudflareAccess {
+                    Button { Task { await signInWithCloudflareAccess() } } label: {
+                        Label("Continue with Cloudflare Access", systemImage: "lock.shield")
+                    }
+                }
+                if methods.passkeys {
+                    Button { Task { await signInWithPasskey() } } label: {
+                        Label("Continue with Passkey", systemImage: "person.badge.key.fill")
+                    }
+                }
+            }
+        }
+        if methods.password {
+            Section("Sign in with password") {
+                TextField("Username", text: $username)
+                    .textInputAutocapitalization(.never)
+                    .textContentType(.username)
+                    .autocorrectionDisabled()
+                SecureField("Password", text: $password)
+                    .textContentType(.password)
+                if methods.local && methods.ldap {
+                    Picker("Account type", selection: $provider) {
+                        Text("Local account").tag("local")
+                        Text("Directory / LDAP").tag("ldap")
+                    }
+                }
+                Button("Sign in") { Task { await signInWithPassword() } }
+                    .disabled(username.isEmpty || password.isEmpty)
+            }
+        }
+        if !methods.password && !methods.keycloak && !methods.cloudflareAccess && !methods.passkeys {
+            Section {
+                Text("This server doesn't offer any sign-in method for the mobile app. Contact your ServiceOps administrator.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var verificationSection: some View {
+        Section {
+            TextField("Authentication or backup code", text: $mfaCode)
+                .textContentType(.oneTimeCode)
+                .keyboardType(.asciiCapable)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .focused($mfaFieldFocused)
+                .onSubmit { Task { await submitVerification() } }
+            Button("Verify") { Task { await submitVerification() } }
+                .disabled(mfaCode.trimmingCharacters(in: .whitespaces).isEmpty)
+            Button("Cancel", role: .cancel) {
+                pendingVerification = nil
+                mfaCode = ""
+                errorMessage = nil
+            }
+        } header: {
+            Text("Two-step verification")
+        } footer: {
+            Text("Enter the code from your authenticator app, or one of your backup codes.")
+        }
+    }
+
+    // MARK: Discovery
+
+    private func discoverMethods() async {
+        isDiscovering = true
+        defer { isDiscovering = false }
         do {
             let client = try ServiceOpsAPIClient(baseURLString: baseURL, token: "")
+            let discovered = try await client.authMethods() ?? .legacy
+            accessGateHost = nil
+            methods = discovered
+            errorMessage = nil
+            selectDefaultProvider(for: discovered)
+        } catch ServiceOpsAPIError.accessRequired(let host) {
+            accessGateHost = host
+            methods = nil
+        } catch {
+            // Unreachable or misconfigured: still offer the classic methods so the
+            // user can try, and show why discovery failed.
+            accessGateHost = nil
+            methods = .legacy
+            selectDefaultProvider(for: .legacy)
+            if !baseURL.trimmingCharacters(in: .whitespaces).isEmpty {
+                errorMessage = Self.message(for: error)
+            }
+        }
+    }
+
+    /// Prefers the account type that last worked, when the server still allows it.
+    private func selectDefaultProvider(for methods: MobileAuthMethods) {
+        let allowed = [methods.local ? "local" : nil, methods.ldap ? "ldap" : nil].compactMap { $0 }
+        provider = allowed.contains(lastPasswordProvider) ? lastPasswordProvider : (allowed.first ?? "local")
+    }
+
+    // MARK: Sign-in methods
+
+    private func signInWithPassword() async {
+        await run(retry: .password) {
+            let client = try ServiceOpsAPIClient(baseURLString: baseURL, token: "")
             let response = try await client.login(username: username, password: password, provider: provider,
-                                                  mfaCode: mfaCode.isEmpty ? nil : mfaCode)
-            authenticated(response)
-        } catch { errorMessage = error.localizedDescription }
+                                                  mfaCode: currentMFACode)
+            lastPasswordProvider = provider
+            return response
+        }
+    }
+
+    private func signInWithCloudflareAccess() async {
+        guard let host = URL(string: baseURL.trimmingCharacters(in: .whitespaces))?.host else {
+            errorMessage = "Enter a valid ServiceOps server URL."
+            return
+        }
+        if let token = CloudflareAccessSession.token(for: host) {
+            await completeCloudflareAccessSignIn(assertion: token)
+        } else {
+            accessPurpose = .identity(host: host)
+        }
+    }
+
+    private func completeCloudflareAccessSignIn(assertion: String) async {
+        await run(retry: .cloudflareAccess(assertion: assertion)) {
+            let client = try ServiceOpsAPIClient(baseURLString: baseURL, token: "")
+            return try await client.loginWithCloudflareAccess(assertion: assertion, mfaCode: currentMFACode)
+        }
+    }
+
+    private func signInWithKeycloak() async {
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            let client = try ServiceOpsAPIClient(baseURLString: baseURL, token: "")
+            let pkce = PKCEChallenge()
+            let startURL = try client.keycloakStartURL(codeChallenge: pkce.challenge, state: pkce.state)
+            let callbackURL = try await webAuthenticationSession.authenticate(
+                using: startURL, callbackURLScheme: "serviceops", preferredBrowserSession: .shared
+            )
+            let items = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let value = { (name: String) in items.first { $0.name == name }?.value }
+            guard value("state") == pkce.state else {
+                throw ServiceOpsAPIError.transport("The sign-in response didn't match this request. Try again.")
+            }
+            if let failure = value("error") {
+                throw ServiceOpsAPIError.transport(Self.keycloakMessage(for: failure))
+            }
+            guard let code = value("code") else {
+                throw ServiceOpsAPIError.transport("Your organization didn't complete the sign-in. Try again.")
+            }
+            authenticated(try await client.exchangeKeycloakCode(code, verifier: pkce.verifier))
+        } catch let error as ASWebAuthenticationSessionError where error.code == .canceledLogin {
+            return
+        } catch {
+            errorMessage = Self.message(for: error)
+        }
+    }
+
+    private func signInWithPasskey() async {
+        isBusy = true
+        defer { isBusy = false }
+        do {
+            authenticated(try await PasskeyManager().authenticate(baseURL: baseURL))
+        } catch let error as ASAuthorizationError where error.code == .canceled {
+            return
+        } catch {
+            errorMessage = Self.message(for: error)
+        }
     }
 
     private func unlockWithLocalAuthentication() async {
-        isUnlockingSession = true
-        defer { isUnlockingSession = false }
+        isBusy = true
+        defer { isBusy = false }
         do {
             try await unlockSession()
         } catch {
@@ -196,14 +423,90 @@ private struct MobileLoginView: View {
         }
     }
 
-    private func signInWithPasskey() async {
-        isUsingPasskey = true
-        defer { isUsingPasskey = false }
+    // MARK: MFA step-up
+
+    private var currentMFACode: String? {
+        guard pendingVerification != nil else { return nil }
+        let code = mfaCode.trimmingCharacters(in: .whitespaces)
+        return code.isEmpty ? nil : code
+    }
+
+    private func submitVerification() async {
+        switch pendingVerification {
+        case .password: await signInWithPassword()
+        case .cloudflareAccess(let assertion): await completeCloudflareAccessSignIn(assertion: assertion)
+        case nil: break
+        }
+    }
+
+    /// Runs a sign-in attempt and switches to the next step the server asks for:
+    /// an MFA code, a Cloudflare Access sign-in, or an error message.
+    private func run(retry: PendingVerification, _ attempt: () async throws -> MobileAuthResponse) async {
+        isBusy = true
+        defer { isBusy = false }
         do {
-            let response = try await PasskeyManager().authenticate(baseURL: baseURL)
+            let response = try await attempt()
+            pendingVerification = nil
+            mfaCode = ""
+            errorMessage = nil
             authenticated(response)
+        } catch let error as ServiceOpsAPIError {
+            switch Self.mfaState(of: error) {
+            case .required where pendingVerification == nil:
+                pendingVerification = retry
+                errorMessage = nil
+                mfaFieldFocused = true
+            case .required, .invalid:
+                // Already asked once: the code that was entered wasn't accepted.
+                pendingVerification = retry
+                mfaCode = ""
+                errorMessage = "That code wasn't accepted. Check your authenticator app and try again."
+                mfaFieldFocused = true
+            case nil:
+                if case .accessRequired(let host) = error {
+                    pendingVerification = nil
+                    accessGateHost = host
+                    methods = nil
+                } else if error.serverCode == "access_identity_missing", let host = URL(string: baseURL)?.host {
+                    CloudflareAccessSession.clear(for: host)
+                    pendingVerification = nil
+                    errorMessage = "Your Cloudflare Access sign-in has expired. Continue with Cloudflare Access again."
+                } else {
+                    errorMessage = Self.message(for: error)
+                }
+            }
         } catch {
-            passkeyMessage = error.localizedDescription
+            errorMessage = Self.message(for: error)
+        }
+    }
+
+    private enum MFAState { case required, invalid }
+
+    /// Uses the server's error code, falling back to its message on servers that predate codes.
+    private static func mfaState(of error: ServiceOpsAPIError) -> MFAState? {
+        switch error.serverCode {
+        case "mfa_required": return .required
+        case "mfa_invalid": return .invalid
+        case nil where error.statusCode == 401 && (error.serverMessage ?? "").contains("MFA or backup code"):
+            return .required
+        default: return nil
+        }
+    }
+
+    private static func message(for error: Error) -> String {
+        if let apiError = error as? ServiceOpsAPIError, let message = apiError.serverMessage {
+            return message
+        }
+        return error.localizedDescription
+    }
+
+    private static func keycloakMessage(for code: String) -> String {
+        switch code {
+        case "access_denied": "Sign-in was cancelled or refused by your organization."
+        case "mfa_assurance": "Your organization didn't confirm multi-factor authentication. Sign in again with MFA."
+        case "link_refused": "An account with your email already exists. Verify your email with your organization, or ask an administrator to link the account."
+        case "inactive": "This account or its organization is not active."
+        default: "Single sign-on couldn't be completed. Try again."
         }
     }
 }
@@ -334,7 +637,7 @@ private struct HomeView: View {
                                     }
                                 }
                             }
-                            .background(.white, in: RoundedRectangle(cornerRadius: 16))
+                            .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 16))
                             .shadow(color: .black.opacity(0.06), radius: 16, y: 8)
                         }
                     }
@@ -351,7 +654,6 @@ private struct HomeView: View {
                     await store.loadTickets(baseURL: baseURL, token: apiToken, filter: .all)
                 }
             }
-            .serviceOpsAlert(store: store)
         }
     }
 }
@@ -433,7 +735,6 @@ private struct TicketsView: View {
             .onChange(of: filter) { _, newFilter in
                 Task { await store.loadTickets(baseURL: baseURL, token: apiToken, filter: newFilter) }
             }
-            .serviceOpsAlert(store: store)
         }
     }
 }
@@ -449,12 +750,12 @@ private struct TicketListPanel<Destination: View>: View {
             HStack(spacing: 10) {
                 Image(systemName: "line.3.horizontal")
                     .frame(width: 34, height: 34)
-                    .background(.white, in: RoundedRectangle(cornerRadius: 4))
+                    .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 4))
                     .overlay(RoundedRectangle(cornerRadius: 4).stroke(ServiceOpsTheme.line))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Tickets")
                         .font(.headline)
-                        .foregroundStyle(ServiceOpsTheme.tealDark)
+                        .foregroundStyle(ServiceOpsTheme.tealText)
                     Text("All visible incidents and changes")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -494,7 +795,7 @@ private struct TicketListPanel<Destination: View>: View {
                 }
             }
         }
-        .background(.white, in: RoundedRectangle(cornerRadius: 6))
+        .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(ServiceOpsTheme.line))
         .shadow(color: .black.opacity(0.04), radius: 3, y: 1)
     }
@@ -638,7 +939,7 @@ private struct AppletCard: View {
             }
             .padding(14)
             .frame(maxWidth: .infinity, minHeight: 136, alignment: .leading)
-            .background(.white, in: RoundedRectangle(cornerRadius: 16))
+            .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16).stroke(ServiceOpsTheme.nowLine))
             .opacity(isEnabled ? 1 : 0.58)
             .shadow(color: .black.opacity(0.05), radius: 14, y: 8)
@@ -669,7 +970,7 @@ private struct QuickActionButton: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 14)
-            .background(.white, in: RoundedRectangle(cornerRadius: 16))
+            .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 16))
             .overlay(RoundedRectangle(cornerRadius: 16).stroke(ServiceOpsTheme.nowLine))
         }
         .buttonStyle(.plain)
@@ -688,7 +989,7 @@ private struct MobileRecordCard: View {
                     Text(ticket.number)
                         .font(.caption.weight(.bold))
                         .monospacedDigit()
-                        .foregroundStyle(ServiceOpsTheme.nowGreenDark)
+                        .foregroundStyle(ServiceOpsTheme.greenText)
                     PriorityDot(priority: ticket.priority)
                     Text(ticket.priority)
                         .font(.caption2.weight(.bold))
@@ -742,7 +1043,7 @@ private struct TicketRow: View {
                 Text(ticket.number)
                     .font(.subheadline.weight(.bold))
                     .monospacedDigit()
-                    .foregroundStyle(ServiceOpsTheme.tealDark)
+                    .foregroundStyle(ServiceOpsTheme.tealText)
                 HStack(spacing: 6) {
                     PriorityDot(priority: ticket.priority)
                     Text(ticket.priority)
@@ -837,11 +1138,15 @@ private struct TicketDetailView: View {
                         }
                     }
 
+                    // Where the ticket's devices sit, like the web ticket page's rack panel.
+                    TicketRackPlacementPanel(number: displayedTicket.number, baseURL: baseURL, token: apiToken,
+                                             canViewCMDB: store.capabilities?.viewCmdb ?? false)
+
                     RecordPanel(title: "Update record", subtitle: "State and priority") {
                         VStack(spacing: 14) {
                             Picker("State", selection: $selectedState) {
-                                ForEach(TicketState.allCases) { state in
-                                    Text(state.rawValue).tag(state.rawValue)
+                                ForEach(TicketState.options(from: displayedTicket.state), id: \.self) { state in
+                                    Text(state).tag(state)
                                 }
                             }
                             Picker("Priority", selection: $selectedPriority) {
@@ -861,9 +1166,17 @@ private struct TicketDetailView: View {
                                 }
                             }
                             .buttonStyle(PrimaryButtonStyle())
-                            .disabled(store.isSaving)
+                            // The server rejects an empty PATCH body, so require an actual edit.
+                            .disabled(store.isSaving || !hasChanges)
                         }
                     }
+
+                    if displayedTicket.type == .change {
+                        ChangeTasksView(number: displayedTicket.number, baseURL: baseURL, token: apiToken,
+                                        canManage: store.capabilities?.manageTickets ?? false)
+                    }
+
+                    TicketAttachmentsView(number: displayedTicket.number, baseURL: baseURL, token: apiToken)
 
                     TicketCommentsView(number: displayedTicket.number, baseURL: baseURL, token: apiToken)
                 }
@@ -880,7 +1193,10 @@ private struct TicketDetailView: View {
             selectedState = updatedTicket?.state ?? selectedState
             selectedPriority = updatedTicket?.priority ?? selectedPriority
         }
-        .serviceOpsAlert(store: store)
+    }
+
+    private var hasChanges: Bool {
+        selectedState != displayedTicket.state || selectedPriority != displayedTicket.priority
     }
 
     private func saveChanges() async {
@@ -973,7 +1289,6 @@ private struct NewIncidentView: View {
             }
             .navigationTitle("New")
             .navigationBarTitleDisplayMode(.inline)
-            .serviceOpsAlert(store: store)
         }
     }
 
@@ -1013,12 +1328,31 @@ private struct MobileMoreView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Operations") {
+                if let profile = store.profile {
+                    Section("Signed in") {
+                        LabeledContent("Name", value: profile.name)
+                        LabeledContent("Username", value: profile.username)
+                        LabeledContent("Role", value: profile.role.capitalized)
+                    }
+                }
+                Section("Work and reference") {
                     NavigationLink { ApprovalsView(baseURL: baseURL, token: apiToken) } label: { Label("My approvals", systemImage: "checkmark.seal") }
                     NavigationLink { KnowledgeView(baseURL: baseURL, token: apiToken) } label: { Label("Knowledge", systemImage: "book.closed") }
-                    NavigationLink { CMDBView(baseURL: baseURL, token: apiToken) } label: { Label("CMDB", systemImage: "server.rack") }
                 }
-                Section("Account") {
+                Section("Infrastructure") {
+                    if store.capabilities?.viewCmdb == true {
+                        NavigationLink { CMDBView(baseURL: baseURL, token: apiToken) } label: {
+                            Label("Servers and assets", systemImage: "server.rack")
+                        }
+                        Text("Locations, racks, hardware and ownership").font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Label("Asset access requires an IT role", systemImage: "lock").foregroundStyle(.secondary)
+                    }
+                }
+                Section("Account and connection") {
+                    NavigationLink {
+                        ServerInformationView(store: store, baseURL: baseURL)
+                    } label: { Label("ServiceOps server", systemImage: "network") }
                     NavigationLink {
                         SettingsView(store: store, baseURL: $baseURL, apiToken: $apiToken,
                                      biometricLockEnabled: $biometricLockEnabled, signOut: signOut)
@@ -1054,7 +1388,7 @@ private struct SettingsView: View {
                     VStack(spacing: 16) {
                         WorkspaceHeader(
                             title: "Settings",
-                            subtitle: store.connectionMessage ?? "Local Docker connection",
+                            subtitle: store.connectionMessage ?? "Account, connection and device security",
                             systemImage: "gearshape",
                             isLoading: store.isCheckingConnection,
                             action: nil
@@ -1146,7 +1480,6 @@ private struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
-            .serviceOpsAlert(store: store)
             .task { await loadPasskeys() }
         }
     }
@@ -1227,7 +1560,7 @@ private struct WorkspaceHeader: View {
             }
         }
         .padding(16)
-        .background(.white, in: RoundedRectangle(cornerRadius: 6))
+        .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(ServiceOpsTheme.line))
         .shadow(color: .black.opacity(0.04), radius: 3, y: 1)
     }
@@ -1256,7 +1589,7 @@ private struct SummaryStrip: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
-                .background(.white, in: RoundedRectangle(cornerRadius: 6))
+                .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 6))
                 .overlay(alignment: .top) {
                     Rectangle()
                         .fill(item.color)
@@ -1334,7 +1667,7 @@ private struct StateTrack: View {
                     .foregroundStyle(index <= currentIndex ? .white : ServiceOpsTheme.muted)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
-                    .background(index <= currentIndex ? ServiceOpsTheme.green : Color(red: 0.89, green: 0.92, blue: 0.93), in: RoundedRectangle(cornerRadius: 4))
+                    .background(index <= currentIndex ? ServiceOpsTheme.green : ServiceOpsTheme.trackInactive, in: RoundedRectangle(cornerRadius: 4))
             }
         }
         .accessibilityElement(children: .combine)
@@ -1371,7 +1704,7 @@ private struct RecordPanel<Content: View>: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.white, in: RoundedRectangle(cornerRadius: 6))
+        .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(ServiceOpsTheme.line))
         .shadow(color: .black.opacity(0.04), radius: 3, y: 1)
     }
@@ -1444,7 +1777,7 @@ private struct StatusNotice: View {
             Spacer()
         }
         .padding(14)
-        .background(.white, in: RoundedRectangle(cornerRadius: 6))
+        .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(ServiceOpsTheme.line))
     }
 }
@@ -1479,19 +1812,19 @@ private struct PriorityBadge: View {
 
     private var priorityForeground: Color {
         switch priority {
-        case "P1": Color(red: 0.65, green: 0.17, blue: 0.13)
-        case "P2": Color(red: 0.61, green: 0.36, blue: 0.00)
-        case "P3": Color(red: 0.27, green: 0.38, blue: 0.36)
-        default: Color(red: 0.33, green: 0.38, blue: 0.42)
+        case "P1": ServiceOpsTheme.adaptive(light: (0.65, 0.17, 0.13), dark: (1.00, 0.66, 0.62))
+        case "P2": ServiceOpsTheme.adaptive(light: (0.61, 0.36, 0.00), dark: (1.00, 0.78, 0.45))
+        case "P3": ServiceOpsTheme.adaptive(light: (0.27, 0.38, 0.36), dark: (0.68, 0.82, 0.79))
+        default: ServiceOpsTheme.adaptive(light: (0.33, 0.38, 0.42), dark: (0.72, 0.77, 0.81))
         }
     }
 
     private var priorityBackground: Color {
         switch priority {
-        case "P1": Color(red: 0.99, green: 0.90, blue: 0.89)
-        case "P2": Color(red: 1.00, green: 0.94, blue: 0.85)
-        case "P3": Color(red: 0.93, green: 0.95, blue: 0.95)
-        default: Color(red: 0.91, green: 0.93, blue: 0.95)
+        case "P1": ServiceOpsTheme.adaptive(light: (0.99, 0.90, 0.89), dark: (0.36, 0.11, 0.09))
+        case "P2": ServiceOpsTheme.adaptive(light: (1.00, 0.94, 0.85), dark: (0.34, 0.22, 0.04))
+        case "P3": ServiceOpsTheme.adaptive(light: (0.93, 0.95, 0.95), dark: (0.15, 0.21, 0.20))
+        default: ServiceOpsTheme.adaptive(light: (0.91, 0.93, 0.95), dark: (0.17, 0.20, 0.23))
         }
     }
 }
@@ -1537,8 +1870,8 @@ private struct ServiceOpsTextFieldStyle: TextFieldStyle {
             .font(.subheadline)
             .padding(.horizontal, 11)
             .padding(.vertical, 10)
-            .background(.white, in: RoundedRectangle(cornerRadius: 4))
-            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color(red: 0.78, green: 0.82, blue: 0.84)))
+            .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 4))
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(ServiceOpsTheme.fieldBorder))
     }
 }
 
@@ -1560,7 +1893,7 @@ private struct SecondaryButtonStyle: ButtonStyle {
             .foregroundStyle(ServiceOpsTheme.ink)
             .padding(.vertical, 12)
             .padding(.horizontal, 16)
-            .background(configuration.isPressed ? ServiceOpsTheme.fieldBackground : .white, in: RoundedRectangle(cornerRadius: 7))
+            .background(configuration.isPressed ? ServiceOpsTheme.fieldBackground : ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 7))
             .overlay(RoundedRectangle(cornerRadius: 7).stroke(ServiceOpsTheme.line))
     }
 }
@@ -1571,7 +1904,7 @@ private struct IconButtonStyle: ButtonStyle {
             .font(.subheadline.weight(.bold))
             .foregroundStyle(ServiceOpsTheme.ink)
             .frame(width: 34, height: 34)
-            .background(configuration.isPressed ? ServiceOpsTheme.fieldBackground : .white, in: RoundedRectangle(cornerRadius: 4))
+            .background(configuration.isPressed ? ServiceOpsTheme.fieldBackground : ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 4))
             .overlay(RoundedRectangle(cornerRadius: 4).stroke(ServiceOpsTheme.line))
     }
 }
@@ -1580,36 +1913,57 @@ private extension View {
     func serviceOpsAlert(store: ServiceOpsStore) -> some View {
         alert("ServiceOps", isPresented: Binding(
             get: { store.errorMessage != nil },
-            set: { if !$0 { store.errorMessage = nil } }
+            // Clearing on the next turn keeps the store from publishing during the
+            // view update that dismisses the alert.
+            set: { isPresented in
+                if !isPresented { Task { @MainActor in store.errorMessage = nil } }
+            }
         )) {
-            Button("OK", role: .cancel) { store.errorMessage = nil }
+            Button("OK", role: .cancel) {}
         } message: {
             Text(store.errorMessage ?? "")
         }
     }
 }
 
-private enum ServiceOpsTheme {
+/// App palette. Neutral and text colors adapt to light and dark appearance; brand fills
+/// (header gradient, record-type circles, primary buttons) stay the same in both so white
+/// text on them keeps its contrast.
+enum ServiceOpsTheme {
     static let nav = Color(red: 0.06, green: 0.10, blue: 0.14)
-    static let ink = Color(red: 0.09, green: 0.13, blue: 0.17)
-    static let muted = Color(red: 0.40, green: 0.46, blue: 0.51)
-    static let line = Color(red: 0.87, green: 0.90, blue: 0.91)
-    static let background = Color(red: 0.96, green: 0.97, blue: 0.97)
-    static let nowBackground = Color(red: 0.95, green: 0.97, blue: 0.98)
-    static let nowLine = Color(red: 0.88, green: 0.91, blue: 0.93)
-    static let toolbarBackground = Color(red: 0.97, green: 0.98, blue: 0.98)
-    static let headerBackground = Color(red: 0.93, green: 0.95, blue: 0.96)
-    static let fieldBackground = Color(red: 0.95, green: 0.97, blue: 0.97)
-    static let badgeBackground = Color(red: 0.93, green: 0.95, blue: 0.95)
+    static let ink = adaptive(light: (0.09, 0.13, 0.17), dark: (0.91, 0.94, 0.95))
+    static let muted = adaptive(light: (0.40, 0.46, 0.51), dark: (0.62, 0.68, 0.72))
+    static let line = adaptive(light: (0.87, 0.90, 0.91), dark: (0.22, 0.26, 0.29))
+    static let background = adaptive(light: (0.96, 0.97, 0.97), dark: (0.04, 0.06, 0.07))
+    static let nowBackground = adaptive(light: (0.95, 0.97, 0.98), dark: (0.04, 0.06, 0.07))
+    static let nowLine = adaptive(light: (0.88, 0.91, 0.93), dark: (0.20, 0.24, 0.27))
+    static let toolbarBackground = adaptive(light: (0.97, 0.98, 0.98), dark: (0.09, 0.11, 0.13))
+    static let headerBackground = adaptive(light: (0.93, 0.95, 0.96), dark: (0.12, 0.15, 0.17))
+    static let fieldBackground = adaptive(light: (0.95, 0.97, 0.97), dark: (0.14, 0.17, 0.19))
+    static let badgeBackground = adaptive(light: (0.93, 0.95, 0.95), dark: (0.17, 0.20, 0.23))
+    /// Cards and panels: white in light mode, a raised dark gray in dark mode.
+    static let surface = adaptive(light: (1.00, 1.00, 1.00), dark: (0.10, 0.13, 0.15))
+    static let fieldBorder = adaptive(light: (0.78, 0.82, 0.84), dark: (0.30, 0.35, 0.38))
+    static let trackInactive = adaptive(light: (0.89, 0.92, 0.93), dark: (0.20, 0.24, 0.27))
     static let green = Color(red: 0.09, green: 0.63, blue: 0.52)
     static let greenDark = Color(red: 0.05, green: 0.49, blue: 0.41)
     static let nowGreen = Color(red: 0.00, green: 0.57, blue: 0.42)
     static let nowGreenDark = Color(red: 0.00, green: 0.31, blue: 0.28)
     static let tealDark = Color(red: 0.00, green: 0.24, blue: 0.30)
+    /// Text and icon variants of the dark brand colors, readable on `surface` in dark mode.
+    static let greenText = adaptive(light: (0.00, 0.31, 0.28), dark: (0.36, 0.84, 0.70))
+    static let tealText = adaptive(light: (0.00, 0.24, 0.30), dark: (0.45, 0.80, 0.86))
     static let amber = Color(red: 0.98, green: 0.67, blue: 0.24)
     static let blue = Color(red: 0.15, green: 0.45, blue: 0.78)
     static let purple = Color(red: 0.42, green: 0.30, blue: 0.78)
     static let changeBrown = Color(red: 0.44, green: 0.36, blue: 0.09)
+
+    static func adaptive(light: (Double, Double, Double), dark: (Double, Double, Double)) -> Color {
+        Color(uiColor: UIColor { traits in
+            let rgb = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: rgb.0, green: rgb.1, blue: rgb.2, alpha: 1)
+        })
+    }
 }
 
 enum ServiceOpsDate {

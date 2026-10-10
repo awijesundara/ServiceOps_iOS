@@ -5,6 +5,7 @@
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>webcredentials:serviceops.wijesundara.com</string>
+		<string>webcredentials:serviceops.wijesundara.com?mode=developer</string>
 	</array>
 </dict>
 </plist>

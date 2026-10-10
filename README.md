@@ -20,9 +20,12 @@ Current app version: **1.3.2 (build 8)**
 
 ## Screenshots
 
+The current simulator captures use non-sensitive example records. Optional rack totals depend on the server response.
+
 <table>
-<tr><td width="50%"><img src="docs/screenshots/iphone-home.png" alt="ServiceOps iPhone home screen"><br><sub>Home and operational overview</sub></td><td width="50%"><img src="docs/screenshots/iphone-work.png" alt="ServiceOps iPhone My Work screen"><br><sub>Assigned incidents and changes</sub></td></tr>
-<tr><td width="50%"><img src="docs/screenshots/iphone-inbox.png" alt="ServiceOps iPhone notification inbox"><br><sub>Ticket, approval, and security notifications</sub></td><td width="50%"><img src="docs/screenshots/iphone-more.png" alt="ServiceOps iPhone More screen"><br><sub>Approvals, knowledge, CMDB, security, and app version</sub></td></tr>
+<tr><td width="50%"><img src="docs/screenshots/iphone-login.png" alt="ServiceOps sign-in screen"><br><sub>Server-aware sign-in</sub></td><td width="50%"><img src="docs/screenshots/iphone-more.png" alt="Grouped ServiceOps More screen"><br><sub>Infrastructure, account and connection navigation</sub></td></tr>
+<tr><td width="50%"><img src="docs/screenshots/iphone-assets.png" alt="Searchable server and asset inventory"><br><sub>Search and filter assets</sub></td><td width="50%"><img src="docs/screenshots/iphone-asset-detail.png" alt="Server details and physical location"><br><sub>Asset details, location and rack access</sub></td></tr>
+<tr><td width="50%"><img src="docs/screenshots/iphone-rack.png" alt="Numbered rack elevation with the selected server highlighted"><br><sub>Front/rear rack view and recorded capacity</sub></td><td width="50%"><img src="docs/screenshots/iphone-server.png" alt="ServiceOps server connection information"><br><sub>Endpoint, transport and API diagnostics</sub></td></tr>
 </table>
 
 ## Included capabilities
@@ -32,7 +35,8 @@ Current app version: **1.3.2 (build 8)**
 - Passkey registration and passwordless sign-in.
 - Home dashboard, assigned incidents and changes, record search and filtering.
 - Incident creation, record updates, work notes, and activity history.
-- Approval actions, knowledge search, CMDB lookup, and connection diagnostics.
+- Approval actions, knowledge search, searchable assets with site/rack/hardware details, and connection diagnostics.
+- Front/rear rack elevations with selected-device highlighting, recorded capacity, placement warnings and optional server-provided totals.
 - APNs device registration, real-time ticket/approval/security alerts, and an
   in-app notification inbox.
 - User-attributed server audit events containing iOS platform, app version,
@@ -45,10 +49,15 @@ Current app version: **1.3.2 (build 8)**
 3. Run on a simulator or a signed iPhone.
 4. Enter the HTTPS ServiceOps URL and sign in with your own account.
 
-For local development, the default server is `http://192.168.68.65`. A
-physical iPhone must be on the same LAN and use the Mac's LAN address;
-`127.0.0.1` points to the phone itself. Plain HTTP is intended only for the
-local development subnet. Use HTTPS outside that environment.
+New installations default to `https://serviceops.wijesundara.com`. Existing saved server addresses are preserved. Enter your own HTTPS ServiceOps endpoint when connecting to another deployment. Local HTTP is for development only; `127.0.0.1` on a physical phone refers to the phone itself.
+
+### Passkeys and signing
+
+Simulator builds retain an application identifier and Associated Domains entitlement. Debug simulator builds also include the Associated Domains developer-mode entry. The `apple-app-site-association` document must be publicly reachable and list your team ID plus bundle identifier.
+
+The current device entitlement file supports builds using a personal development team and omits Associated Domains; **passkeys are unavailable in that device configuration**. For a team provisioned for Associated Domains, set `CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]` to `ServiceOps/ServiceOps.entitlements` in both Debug and Release and use a matching provisioning profile. Push notifications likewise need a profile with the relevant capability.
+
+Native passkey creation and physical-device acceptance remain to be verified. Simulator build and screenshot checks do not establish either.
 
 Push notifications require a signed build with the Push Notifications
 entitlement and matching APNs configuration in ServiceOps:
@@ -68,13 +77,13 @@ Repository images were captured from the real iPhone simulator build with
 non-sensitive fixture records. The temporary capture fixture was removed after
 capture, so no demo-data or authentication-bypass path ships in source.
 
-## Project statistics
+## Validation
 
-| Metric | Value |
-|---|---|
-| Tracked files | 26 |
-| Lines of code (non-blank) | 2,475 |
-| Languages | Swift 2,475 |
-| Commits | 11 |
+CI builds the iOS simulator target and runs rack layout and backward-compatible response decoding regressions. Run the same model checks locally:
 
-CI builds the app for the iOS simulator with the latest stable Xcode on each push to `main`.
+```sh
+xcrun swiftc ServiceOps/Models.swift ServiceOps/RackLayout.swift Tests/main.swift -o /tmp/serviceops-model-checks
+/tmp/serviceops-model-checks
+```
+
+Screenshot capture uses a separate temporary build with example network responses. No fixture data, capture entrypoint or authentication bypass is included in the published app source.

@@ -11,6 +11,11 @@ final class ServiceOpsStore: ObservableObject {
     @Published var isSaving = false
     @Published var errorMessage: String?
     @Published var connectionMessage: String?
+    @Published var capabilities: MobileCapabilities?
+    @Published var profile: MobileProfile?
+    @Published var serverInfo: ServiceOpsAPIInfo?
+
+    private static let maxTicketPages = 20
 
     func loadTickets(baseURL: String, token: String, filter: TicketTypeFilter) async {
         isLoadingTickets = true
@@ -18,8 +23,17 @@ final class ServiceOpsStore: ObservableObject {
 
         do {
             let client = try ServiceOpsAPIClient(baseURLString: baseURL, token: token)
-            let page = try await client.listTickets(type: filter.apiKind, limit: 100)
-            tickets = page.data
+            // The server caps pages at 100 in ascending id order, so follow the
+            // cursor to include newer records; stop after a bounded number of pages.
+            var loaded: [ServiceTicket] = []
+            var cursor: Int?
+            for _ in 0..<Self.maxTicketPages {
+                let page = try await client.listTickets(type: filter.apiKind, limit: 100, cursor: cursor)
+                loaded.append(contentsOf: page.data)
+                guard let next = page.meta.nextCursor, !page.data.isEmpty else { break }
+                cursor = next
+            }
+            tickets = loaded
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
@@ -83,9 +97,11 @@ final class ServiceOpsStore: ObservableObject {
         do {
             let client = try ServiceOpsAPIClient(baseURLString: baseURL, token: "")
             let info = try await client.checkConnection()
+            serverInfo = info
             connectionMessage = "Connected to \(info.info.title) API \(info.info.version)."
             errorMessage = nil
         } catch {
+            serverInfo = nil
             connectionMessage = nil
             errorMessage = error.localizedDescription
         }

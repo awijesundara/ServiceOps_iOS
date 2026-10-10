@@ -25,3 +25,7 @@ jobs:
             -scheme ServiceOps \
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO
+      - name: Verify rack layout and response compatibility
+        run: |
+          xcrun swiftc ServiceOps/Models.swift ServiceOps/RackLayout.swift Tests/main.swift -o "$RUNNER_TEMP/serviceops-model-checks"
+          "$RUNNER_TEMP/serviceops-model-checks"
