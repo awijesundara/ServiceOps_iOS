@@ -1,0 +1,107 @@
+{
+  "capture_date": "2026-10-11",
+  "source_commit": "57d0c86ae3f5ffb4f5411678c3e4459f2043e5a0",
+  "app_version": "1.3.2",
+  "app_build": "8",
+  "device": "iPhone 17 Pro",
+  "simulator_os": "iOS 26.5",
+  "data": "Non-sensitive example API responses intercepted inside a temporary capture build; no production requests.",
+  "screenshots": [
+    {
+      "file": "iphone-approvals.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "446fdcf6a655adef27b30e82de50e98ef68b77164b6497cbb20d342beba33851"
+    },
+    {
+      "file": "iphone-asset-detail.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "332e1069cd3d286f0ecde1799f614917db090e904277b6f4090fbe494caa6d77"
+    },
+    {
+      "file": "iphone-assets.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "1bec9890198bdf00abec70ebc594eb5a1154bb6f020ff9c4ed02c6e1e84f20e5"
+    },
+    {
+      "file": "iphone-change-details.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "9770e4b6bc1e14a942720105a2ab15a6e7f9ebf8b8b3c0c1dc45a7cb11e1900a"
+    },
+    {
+      "file": "iphone-create.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "eab705a718806fec51ff59369e0b89b5ebccf0edad6d6ea8224ed40d1919c35e"
+    },
+    {
+      "file": "iphone-home.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "f2b8130abce65571f570da35aa4066a0b5abc98998e97a9d215e4d8a047ef226"
+    },
+    {
+      "file": "iphone-inbox.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "d3f33d0260405c25ae1b8a701582d36a91af24bb01860bfac0bf6a4aeeed3a14"
+    },
+    {
+      "file": "iphone-knowledge.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "f40693f6cf63edb2f1a09d6eaf19cf4e61a262b649d27630ba4d1a11464dba3d"
+    },
+    {
+      "file": "iphone-login.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "12788c0612163ac4cef25b1b68087eafdac33ec6bace266a74f91ecbe8b6c766"
+    },
+    {
+      "file": "iphone-more.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "06ad90ebb16b4b36e07dceaebc5a33d04ab27ce3dfb79bd3c1f961e0cd72132d"
+    },
+    {
+      "file": "iphone-rack.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "613a2653c7b4f7129a996ac68b8dffed574d3f305e739c60b93522c34131ecff"
+    },
+    {
+      "file": "iphone-server.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "ce6c50d678a215696c022868e989b63ff16c0717c79db1339854839c8bb850a8"
+    },
+    {
+      "file": "iphone-ticket-infrastructure.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "938256ab223a907f7e738db3f7eac2c6bab13e49374546e3243db9d2b3e6279e"
+    },
+    {
+      "file": "iphone-ticket.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "2bf460565da75fe292c22ddd69460b373f128ab05afddf93a2fc3ac50c1ea703"
+    },
+    {
+      "file": "iphone-work.png",
+      "width": 1206,
+      "height": 2622,
+      "sha256": "fc536a257055cb3e9b6e0f9bd424f7a65afa6900a7a3e69b28442df4c3d38464"
+    }
+  ],
+  "validation": {
+    "unchanged_app_simulator_build": "passed",
+    "capture_build": "passed",
+    "rack_response_ticket_profile_filter_regressions": "passed",
+    "visual_review": "passed"
+  }
+}

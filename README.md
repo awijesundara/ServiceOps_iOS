@@ -20,13 +20,14 @@ Current app version: **1.3.2 (build 8)**
 
 ## Screenshots
 
-The current simulator captures use non-sensitive example records. Optional rack totals depend on the server response.
+Refreshed **11 October 2026** from the current app on an **iPhone 17 Pro simulator (iOS 26.5)**, using non-sensitive example records. Optional rack totals depend on the server response. [Capture details](docs/screenshots/capture-manifest.json).
 
 ### Everyday work
 
 <table>
 <tr><td width="50%"><img src="docs/screenshots/iphone-login.png" alt="ServiceOps login page"><br><sub>Server-aware sign-in</sub></td><td width="50%"><img src="docs/screenshots/iphone-home.png" alt="ServiceOps home dashboard"><br><sub>Home overview and quick actions</sub></td></tr>
 <tr><td width="50%"><img src="docs/screenshots/iphone-work.png" alt="ServiceOps ticket list"><br><sub>My Work: incidents and changes</sub></td><td width="50%"><img src="docs/screenshots/iphone-ticket.png" alt="ServiceOps ticket detail"><br><sub>Record details and status updates</sub></td></tr>
+<tr><td width="50%"><img src="docs/screenshots/iphone-ticket-infrastructure.png" alt="Ticket linked configuration item, rack destination and information sections"><br><sub>Linked infrastructure and authorized information</sub></td><td width="50%"><img src="docs/screenshots/iphone-change-details.png" alt="Expanded change dates, implementation, test and backout plans"><br><sub>Expanded change schedule and plans</sub></td></tr>
 <tr><td width="50%"><img src="docs/screenshots/iphone-create.png" alt="ServiceOps incident creation form"><br><sub>Create an incident</sub></td><td width="50%"><img src="docs/screenshots/iphone-inbox.png" alt="ServiceOps notification inbox"><br><sub>Ticket and approval notifications</sub></td></tr>
 </table>
 
@@ -85,9 +86,7 @@ local device inventories. The repository `.gitignore` excludes these files.
 
 ## Screenshot maintenance
 
-Repository images were captured from the real iPhone simulator build with
-non-sensitive fixture records. The temporary capture fixture was removed after
-capture, so no demo-data or authentication-bypass path ships in source.
+Repository images show the current SwiftUI views rendered in an iPhone simulator, including scrolled ticket sections and expanded change details. Example responses are intercepted in a separate temporary capture build. Fixture data and capture entrypoints are excluded from the published app source.
 
 ## Validation
 
