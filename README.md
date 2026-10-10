@@ -20,24 +20,12 @@ Current app version: **1.3.2 (build 8)**
 
 ## Screenshots
 
-Refreshed **11 October 2026** from the current app on an **iPhone 17 Pro simulator (iOS 26.5)**, using non-sensitive example records. Optional rack totals depend on the server response. [Capture details](docs/screenshots/capture-manifest.json).
-
-### Everyday work
+Six freshly captured previews of **v1.3.2** on iPhone 17 Pro (iOS 26.5). Home includes a sample profile photo; records use example data. [Capture details](docs/screenshots/capture-manifest.json).
 
 <table>
-<tr><td width="50%"><img src="docs/screenshots/iphone-login.png" alt="ServiceOps login page"><br><sub>Server-aware sign-in</sub></td><td width="50%"><img src="docs/screenshots/iphone-home.png" alt="ServiceOps home dashboard"><br><sub>Home overview and quick actions</sub></td></tr>
-<tr><td width="50%"><img src="docs/screenshots/iphone-work.png" alt="ServiceOps ticket list"><br><sub>My Work: incidents and changes</sub></td><td width="50%"><img src="docs/screenshots/iphone-ticket.png" alt="ServiceOps ticket detail"><br><sub>Record details and status updates</sub></td></tr>
-<tr><td width="50%"><img src="docs/screenshots/iphone-ticket-infrastructure.png" alt="Ticket linked configuration item, rack destination and information sections"><br><sub>Linked infrastructure and authorized information</sub></td><td width="50%"><img src="docs/screenshots/iphone-change-details.png" alt="Expanded change dates, implementation, test and backout plans"><br><sub>Expanded change schedule and plans</sub></td></tr>
-<tr><td width="50%"><img src="docs/screenshots/iphone-create.png" alt="ServiceOps incident creation form"><br><sub>Create an incident</sub></td><td width="50%"><img src="docs/screenshots/iphone-inbox.png" alt="ServiceOps notification inbox"><br><sub>Ticket and approval notifications</sub></td></tr>
-</table>
-
-### Reference, infrastructure and connection
-
-<table>
-<tr><td width="50%"><img src="docs/screenshots/iphone-more.png" alt="ServiceOps grouped workspace menu"><br><sub>More: work, infrastructure and account</sub></td><td width="50%"><img src="docs/screenshots/iphone-approvals.png" alt="ServiceOps approval requests"><br><sub>Review and decide approvals</sub></td></tr>
-<tr><td width="50%"><img src="docs/screenshots/iphone-knowledge.png" alt="ServiceOps knowledge articles"><br><sub>Search operational knowledge</sub></td><td width="50%"><img src="docs/screenshots/iphone-assets.png" alt="ServiceOps searchable CMDB"><br><sub>CMDB: servers and assets</sub></td></tr>
-<tr><td width="50%"><img src="docs/screenshots/iphone-asset-detail.png" alt="ServiceOps asset details"><br><sub>Physical location, hardware and ownership</sub></td><td width="50%"><img src="docs/screenshots/iphone-rack.png" alt="ServiceOps rack elevation"><br><sub>Front/rear rack layout and selected server</sub></td></tr>
-<tr><td width="50%"><img src="docs/screenshots/iphone-server.png" alt="ServiceOps connection information"><br><sub>Endpoint, transport and API diagnostics</sub></td><td></td></tr>
+<tr><td width="50%"><img src="docs/screenshots/preview-1.3.2-home.png" width="300" alt="Home dashboard and profile"><br><sub>Home dashboard and profile</sub></td><td width="50%"><img src="docs/screenshots/preview-1.3.2-login.png" width="300" alt="Server-aware sign-in"><br><sub>Server-aware sign-in</sub></td></tr>
+<tr><td width="50%"><img src="docs/screenshots/preview-1.3.2-work.png" width="300" alt="My Work and ticket filters"><br><sub>My Work and ticket filters</sub></td><td width="50%"><img src="docs/screenshots/preview-1.3.2-ticket.png" width="300" alt="Ticket details and updates"><br><sub>Ticket details and updates</sub></td></tr>
+<tr><td width="50%"><img src="docs/screenshots/preview-1.3.2-assets.png" width="300" alt="CMDB servers and assets"><br><sub>CMDB servers and assets</sub></td><td width="50%"><img src="docs/screenshots/preview-1.3.2-rack.png" width="300" alt="Rack elevation and selected server"><br><sub>Rack elevation and selected server</sub></td></tr>
 </table>
 
 ## Included capabilities
