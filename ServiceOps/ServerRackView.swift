@@ -362,7 +362,7 @@ extension RackDocument {
     }
     .padding()
     .frame(width: 390)
-    .background(ServiceOpsTheme.nowBackground)
+    .background(ServiceOpsTheme.pageBackground)
     .preferredColorScheme(.dark)
 }
 

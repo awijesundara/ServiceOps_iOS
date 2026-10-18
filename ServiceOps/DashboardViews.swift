@@ -25,7 +25,7 @@ struct DashboardsView: View {
 
     var body: some View {
         ZStack {
-            ServiceOpsTheme.nowBackground.ignoresSafeArea()
+            ServiceOpsTheme.pageBackground.ignoresSafeArea()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -180,7 +180,7 @@ private struct DashboardWidgetCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(ServiceOpsTheme.nowLine))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(ServiceOpsTheme.cardLine))
     }
 
     @ViewBuilder
@@ -322,7 +322,7 @@ private struct DashboardWidgetCard: View {
                     .foregroundStyle(by: .value("Series", "Resolved"))
                     .position(by: .value("Series", "Resolved"))
             }
-            .chartForegroundStyleScale(["Opened": ServiceOpsTheme.amber, "Resolved": ServiceOpsTheme.nowGreen])
+            .chartForegroundStyleScale(["Opened": ServiceOpsTheme.amber, "Resolved": ServiceOpsTheme.brandGreen])
             .frame(height: 160)
             Text("\(widget.openedTotal ?? 0) opened · \(widget.resolvedTotal ?? 0) resolved")
                 .font(.caption).foregroundStyle(.secondary)
@@ -377,7 +377,7 @@ private struct DashboardTile: View {
         switch tile.tone {
         case "alert": .red
         case "warn": ServiceOpsTheme.amber
-        default: ServiceOpsTheme.nowGreen
+        default: ServiceOpsTheme.brandGreen
         }
     }
 
@@ -417,7 +417,7 @@ private struct DashboardBarRow: View {
                 if tappable { Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary) }
             }
             ProgressView(value: Double(bar.count), total: Double(peak))
-                .tint(ServiceOpsTheme.nowGreen)
+                .tint(ServiceOpsTheme.brandGreen)
         }
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
@@ -460,7 +460,7 @@ struct DashboardTicketListView: View {
 
     var body: some View {
         ZStack {
-            ServiceOpsTheme.nowBackground.ignoresSafeArea()
+            ServiceOpsTheme.pageBackground.ignoresSafeArea()
 
             ScrollView {
                 LazyVStack(spacing: 0) {

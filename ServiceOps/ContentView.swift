@@ -62,7 +62,7 @@ struct ContentView: View {
                 .tabItem { Label("More", systemImage: "square.grid.2x2") }
                 .tag(AppTab.more)
             }
-            .tint(ServiceOpsTheme.nowGreen)
+            .tint(ServiceOpsTheme.brandGreen)
             // One alert for the shared store error. Every tab stays alive in the TabView, so
             // per-screen alerts on the same state presented together and fought on dismissal.
             .serviceOpsAlert(store: store)
@@ -564,7 +564,7 @@ private struct HomeView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                ServiceOpsTheme.nowBackground.ignoresSafeArea()
+                ServiceOpsTheme.pageBackground.ignoresSafeArea()
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
@@ -582,7 +582,7 @@ private struct HomeView: View {
                             LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
                                 NavigationLink(value: HomeRoute.tickets(.assignedToMe)) {
                                     AppletCard(title: "My Work", subtitle: "Assigned to you",
-                                               value: count(.assignedToMe), icon: "checklist", color: ServiceOpsTheme.nowGreen)
+                                               value: count(.assignedToMe), icon: "checklist", color: ServiceOpsTheme.brandGreen)
                                 }
                                 NavigationLink(value: HomeRoute.tickets(.myGroups)) {
                                     AppletCard(title: "My Group's Work", subtitle: groupSubtitle,
@@ -633,7 +633,7 @@ private struct HomeView: View {
                                 Spacer()
                                 Button("View all") { selectedTab = .work }
                                     .font(.caption.weight(.semibold))
-                                    .foregroundStyle(ServiceOpsTheme.nowGreen)
+                                    .foregroundStyle(ServiceOpsTheme.brandGreen)
                             }
 
                             VStack(spacing: 0) {
@@ -656,7 +656,7 @@ private struct HomeView: View {
                                 }
                             }
                             .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 18))
-                            .overlay(RoundedRectangle(cornerRadius: 18).stroke(ServiceOpsTheme.nowLine))
+                            .overlay(RoundedRectangle(cornerRadius: 18).stroke(ServiceOpsTheme.cardLine))
                         }
                     }
                     .padding(18)
@@ -715,7 +715,7 @@ private struct ScopedTicketsView: View {
 
     var body: some View {
         ZStack {
-            ServiceOpsTheme.nowBackground.ignoresSafeArea()
+            ServiceOpsTheme.pageBackground.ignoresSafeArea()
 
             ScrollView {
                 TicketListPanel(
@@ -768,7 +768,7 @@ private struct TicketsView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                ServiceOpsTheme.nowBackground.ignoresSafeArea()
+                ServiceOpsTheme.pageBackground.ignoresSafeArea()
 
                 ScrollView {
                     VStack(spacing: 14) {
@@ -875,7 +875,7 @@ private struct FilterTile: View {
             .padding(12)
             .background(isSelected ? AnyShapeStyle(color.gradient) : AnyShapeStyle(ServiceOpsTheme.surface),
                         in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(isSelected ? color : ServiceOpsTheme.nowLine))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(isSelected ? color : ServiceOpsTheme.cardLine))
             .contentShape(RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(PressableCardStyle())
@@ -947,7 +947,7 @@ private struct TicketListPanel<Destination: View>: View {
         }
         .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 14))
         .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).stroke(ServiceOpsTheme.nowLine))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(ServiceOpsTheme.cardLine))
     }
 }
 
@@ -1017,13 +1017,13 @@ private struct MobileHomeHeader: View {
         .padding(18)
         .background(
             LinearGradient(
-                colors: [ServiceOpsTheme.nowGreenDark, ServiceOpsTheme.nowGreen],
+                colors: [ServiceOpsTheme.brandGreenDark, ServiceOpsTheme.brandGreen],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             ),
             in: RoundedRectangle(cornerRadius: 22)
         )
-        .shadow(color: ServiceOpsTheme.nowGreen.opacity(0.22), radius: 20, y: 10)
+        .shadow(color: ServiceOpsTheme.brandGreen.opacity(0.22), radius: 20, y: 10)
     }
 }
 
@@ -1047,7 +1047,7 @@ private struct ProfileAvatar: View {
                     .scaledToFill()
             } else {
                 ZStack {
-                    Circle().fill(onDarkBackground ? AnyShapeStyle(.white.opacity(0.2)) : AnyShapeStyle(ServiceOpsTheme.nowGreen.gradient))
+                    Circle().fill(onDarkBackground ? AnyShapeStyle(.white.opacity(0.2)) : AnyShapeStyle(ServiceOpsTheme.brandGreen.gradient))
                     Text(initials)
                         .font(.system(size: size * 0.38, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white)
@@ -1131,7 +1131,7 @@ private struct AppletCard: View {
         .padding(14)
         .frame(maxWidth: .infinity, minHeight: 132, alignment: .leading)
         .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 18))
-        .overlay(RoundedRectangle(cornerRadius: 18).stroke(ServiceOpsTheme.nowLine))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(ServiceOpsTheme.cardLine))
         .shadow(color: .black.opacity(0.05), radius: 12, y: 6)
         .contentShape(RoundedRectangle(cornerRadius: 18))
         .accessibilityElement(children: .combine)
@@ -1147,9 +1147,9 @@ private struct QuickActionLabel: View {
         VStack(spacing: 8) {
             Image(systemName: icon)
                 .font(.headline)
-                .foregroundStyle(ServiceOpsTheme.nowGreen)
+                .foregroundStyle(ServiceOpsTheme.brandGreen)
                 .frame(width: 42, height: 42)
-                .background(ServiceOpsTheme.nowGreen.opacity(0.12), in: Circle())
+                .background(ServiceOpsTheme.brandGreen.opacity(0.12), in: Circle())
             Text(title)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(ServiceOpsTheme.ink)
@@ -1159,7 +1159,7 @@ private struct QuickActionLabel: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 14)
         .background(ServiceOpsTheme.surface, in: RoundedRectangle(cornerRadius: 16))
-        .overlay(RoundedRectangle(cornerRadius: 16).stroke(ServiceOpsTheme.nowLine))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(ServiceOpsTheme.cardLine))
         .contentShape(RoundedRectangle(cornerRadius: 16))
     }
 }
@@ -1294,7 +1294,7 @@ struct TicketDetailView: View {
 
     var body: some View {
         ZStack {
-            ServiceOpsTheme.nowBackground.ignoresSafeArea()
+            ServiceOpsTheme.pageBackground.ignoresSafeArea()
 
             ScrollView {
                 VStack(spacing: 16) {
@@ -1467,7 +1467,7 @@ private struct NewIncidentView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                ServiceOpsTheme.nowBackground.ignoresSafeArea()
+                ServiceOpsTheme.pageBackground.ignoresSafeArea()
 
                 ScrollView {
                     VStack(spacing: 16) {
@@ -1633,7 +1633,7 @@ private struct SettingsView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                ServiceOpsTheme.nowBackground.ignoresSafeArea()
+                ServiceOpsTheme.pageBackground.ignoresSafeArea()
 
                 ScrollView {
                     VStack(spacing: 16) {
@@ -2143,8 +2143,8 @@ enum ServiceOpsTheme {
     static let muted = adaptive(light: (0.40, 0.46, 0.51), dark: (0.62, 0.68, 0.72))
     static let line = adaptive(light: (0.87, 0.90, 0.91), dark: (0.22, 0.26, 0.29))
     static let background = adaptive(light: (0.96, 0.97, 0.97), dark: (0.04, 0.06, 0.07))
-    static let nowBackground = adaptive(light: (0.95, 0.97, 0.98), dark: (0.04, 0.06, 0.07))
-    static let nowLine = adaptive(light: (0.88, 0.91, 0.93), dark: (0.20, 0.24, 0.27))
+    static let pageBackground = adaptive(light: (0.95, 0.97, 0.98), dark: (0.04, 0.06, 0.07))
+    static let cardLine = adaptive(light: (0.88, 0.91, 0.93), dark: (0.20, 0.24, 0.27))
     static let toolbarBackground = adaptive(light: (0.97, 0.98, 0.98), dark: (0.09, 0.11, 0.13))
     static let headerBackground = adaptive(light: (0.93, 0.95, 0.96), dark: (0.12, 0.15, 0.17))
     static let fieldBackground = adaptive(light: (0.95, 0.97, 0.97), dark: (0.14, 0.17, 0.19))
@@ -2155,8 +2155,8 @@ enum ServiceOpsTheme {
     static let trackInactive = adaptive(light: (0.89, 0.92, 0.93), dark: (0.20, 0.24, 0.27))
     static let green = Color(red: 0.09, green: 0.63, blue: 0.52)
     static let greenDark = Color(red: 0.05, green: 0.49, blue: 0.41)
-    static let nowGreen = Color(red: 0.00, green: 0.57, blue: 0.42)
-    static let nowGreenDark = Color(red: 0.00, green: 0.31, blue: 0.28)
+    static let brandGreen = Color(red: 0.00, green: 0.57, blue: 0.42)
+    static let brandGreenDark = Color(red: 0.00, green: 0.31, blue: 0.28)
     static let tealDark = Color(red: 0.00, green: 0.24, blue: 0.30)
     /// Text and icon variants of the dark brand colors, readable on `surface` in dark mode.
     static let greenText = adaptive(light: (0.00, 0.31, 0.28), dark: (0.36, 0.84, 0.70))
