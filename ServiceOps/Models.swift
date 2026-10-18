@@ -80,7 +80,7 @@ struct ServiceTicket: Identifiable, Hashable, Decodable {
     }
 
     var isActive: Bool {
-        !["Closed", "Cancelled"].contains(state)
+        !["Resolved", "Closed", "Cancelled"].contains(state)
     }
 }
 
@@ -106,7 +106,7 @@ enum TicketScope: String, CaseIterable, Identifiable, Hashable {
 
     var subtitle: String {
         switch self {
-        case .open: "Records that aren't closed or cancelled"
+        case .open: "Records that aren't resolved, closed or cancelled"
         case .assignedToMe: "Open records assigned to you"
         case .myGroups: "Open records for your assignment groups"
         case .majorIncidents: "Open P1 incidents"
@@ -524,3 +524,160 @@ struct TicketDetailField: Hashable, Decodable {
     let label: String
     let value: String?
 }
+
+// MARK: - Dashboards (`/api/v1/mobile/dashboards`)
+
+/// A personal or team dashboard the signed-in user may open.
+struct DashboardSummary: Identifiable, Hashable, Decodable {
+    let id: Int
+    let name: String
+    let description: String
+    let scope: String
+    let home: Bool
+    let group: ServiceOpsPersonOrGroup?
+
+    var isTeam: Bool { scope == "group" }
+}
+
+struct DashboardListing: Decodable {
+    let homeId: Int
+    let dashboards: [DashboardSummary]
+}
+
+/// One dashboard with each widget's data, rendered by the server exactly as the web shows it.
+struct DashboardDocument: Decodable {
+    let id: Int
+    let name: String
+    let description: String
+    let scope: String
+    let home: Bool
+    let group: ServiceOpsPersonOrGroup?
+    let editable: Bool
+    let widgets: [DashboardWidget]
+}
+
+/// The ticket list behind a dashboard number: the web list's kind and filter conditions.
+struct TicketListReference: Hashable, Codable {
+    struct Condition: Hashable, Codable { let field: String; let op: String; let value: String }
+    let kind: String
+    let filter: [Condition]
+
+    /// The `filter` query parameter, as the web list link carries it.
+    var filterParameter: String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return (try? encoder.encode(filter)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+    }
+}
+
+/// `view` says how to draw the widget; only the fields for that view are present.
+struct DashboardWidget: Identifiable, Decodable {
+    struct Tile: Hashable, Decodable { let label: String; let count: Int; let tone: String; let list: TicketListReference? }
+    struct Bar: Hashable, Decodable { let label: String; let count: Int; let list: TicketListReference? }
+    struct Day: Hashable, Decodable { let date: String; let opened: Int; let resolved: Int }
+    struct Member: Hashable, Decodable {
+        struct Person: Hashable, Decodable { let id: Int; let name: String; let username: String }
+        let person: Person?; let tickets: Int; let tasks: Int; let list: TicketListReference?
+    }
+    struct TaskRow: Hashable, Decodable { let number: String; let title: String; let state: String; let dueAt: String? }
+    struct Approval: Hashable, Decodable { let voteId: Int; let number: String; let title: String?; let gate: String }
+    struct UpcomingChange: Hashable, Decodable { let ticket: ServiceTicket; let plannedStart: String?; let plannedEnd: String? }
+    struct RequestRow: Hashable, Decodable { let number: String; let title: String; let state: String; let dueAt: String? }
+    struct Article: Hashable, Decodable { let id: Int; let title: String; let category: String; let createdAt: String? }
+    struct WorkItemRow: Hashable, Decodable {
+        struct Status: Hashable, Decodable { let name: String; let category: String }
+        let key: String; let title: String; let project: String; let priority: String; let status: Status; let dueDate: String?
+    }
+    struct Link: Hashable, Decodable { let label: String; let url: String }
+    struct Notice: Hashable, Decodable {
+        let id: Int; let title: String; let body: String; let read: Bool; let severity: String
+        let targetType: String?; let targetId: Int?; let createdAt: String?
+    }
+
+    let id: Int
+    let key: String
+    let title: String
+    let span: Int
+    let team: ServiceOpsPersonOrGroup?
+    let view: String
+    let list: TicketListReference?
+    let tiles: [Tile]?
+    let tickets: [ServiceTicket]?
+    let bars: [Bar]?
+    let total: Int?
+    let days: [Day]?
+    let openedTotal: Int?
+    let resolvedTotal: Int?
+    let members: [Member]?
+    let missingTeam: Bool?
+    let tasks: [TaskRow]?
+    let approvals: [Approval]?
+    let changes: [UpcomingChange]?
+    let requests: [RequestRow]?
+    let articles: [Article]?
+    let workItems: [WorkItemRow]?
+    let disabled: Bool?
+    let links: [Link]?
+    let notifications: [Notice]?
+    let paragraphs: [String]?
+}
+
+/// `/api/v1/mobile/ticket-list`: one page of the tickets a dashboard number counts.
+struct DashboardTicketPage: Decodable {
+    struct Meta: Decodable { let total: Int; let hasMore: Bool?; let nextCursor: String? }
+    let data: [ServiceTicket]
+    let meta: Meta
+}
+
+// MARK: - Projects (`/api/v1/projects`, `/api/v1/work-items`)
+
+struct ProjectStatus: Identifiable, Hashable, Decodable {
+    let id: Int; let name: String; let category: String
+}
+
+struct ProjectSummary: Identifiable, Hashable, Decodable {
+    let key: String
+    let name: String
+    let description: String?
+    let visibility: String
+    let lead: String?
+    let archived: Bool
+    let statuses: [ProjectStatus]
+    var id: String { key }
+}
+
+struct WorkItemComment: Identifiable, Hashable, Decodable {
+    let id: Int; let author: String; let body: String; let createdAt: String
+}
+
+struct WorkItem: Identifiable, Hashable, Decodable {
+    let key: String
+    let project: String
+    let type: String
+    let title: String
+    let description: String?
+    let status: ProjectStatus
+    let priority: String
+    let reporter: String?
+    let assignees: [String]
+    let labels: [String]
+    let parent: String?
+    let dueDate: String?
+    let storyPoints: Double?
+    let flagged: Bool
+    let createdAt: String
+    let updatedAt: String
+    /// Only on the single-item document.
+    let comments: [WorkItemComment]?
+    var id: String { key }
+
+    var isDone: Bool { status.category == "done" }
+}
+
+struct WorkItemPage: Decodable {
+    struct Meta: Decodable { let nextCursor: Int? }
+    let data: [WorkItem]
+    let meta: Meta
+}
+
+struct WorkItemStatusUpdate: Encodable { let statusId: Int }

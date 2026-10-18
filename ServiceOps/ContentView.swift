@@ -526,6 +526,8 @@ private enum HomeRoute: Hashable {
     case approvals
     case knowledge
     case assets
+    case dashboards
+    case projects
 }
 
 private struct HomeView: View {
@@ -601,11 +603,17 @@ private struct HomeView: View {
 
                         VStack(alignment: .leading, spacing: 10) {
                             SectionLabel("Quick actions")
-                            HStack(spacing: 12) {
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 12), count: 3), spacing: 12) {
                                 if store.capabilities?.createIncident != false {
                                     Button { selectedTab = .create } label: {
                                         QuickActionLabel(title: "Report issue", icon: "plus.message.fill")
                                     }
+                                }
+                                NavigationLink(value: HomeRoute.dashboards) {
+                                    QuickActionLabel(title: "Dashboards", icon: "rectangle.3.group.fill")
+                                }
+                                NavigationLink(value: HomeRoute.projects) {
+                                    QuickActionLabel(title: "Projects", icon: "square.stack.3d.up.fill")
                                 }
                                 if store.capabilities?.viewCmdb == true {
                                     NavigationLink(value: HomeRoute.assets) {
@@ -669,6 +677,10 @@ private struct HomeView: View {
                     KnowledgeView(baseURL: baseURL, token: apiToken)
                 case .assets:
                     CMDBView(baseURL: baseURL, token: apiToken)
+                case .dashboards:
+                    DashboardsView(store: store, baseURL: $baseURL, apiToken: $apiToken)
+                case .projects:
+                    ProjectsView(baseURL: baseURL, token: apiToken)
                 }
             }
             .navigationDestination(for: ServiceTicket.self) { ticket in
@@ -1063,7 +1075,7 @@ private struct SectionLabel: View {
 }
 
 /// Press feedback for card-style buttons and links, so they read as tappable.
-private struct PressableCardStyle: ButtonStyle {
+struct PressableCardStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
@@ -1190,7 +1202,7 @@ private struct MobileRecordCard: View {
     }
 }
 
-private struct TableHeaderRow: View {
+struct TableHeaderRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Text("Number")
@@ -1209,7 +1221,7 @@ private struct TableHeaderRow: View {
     }
 }
 
-private struct TicketRow: View {
+struct TicketRow: View {
     let ticket: ServiceTicket
 
     var body: some View {
@@ -1252,7 +1264,7 @@ private struct TicketRow: View {
     }
 }
 
-private struct TicketDetailView: View {
+struct TicketDetailView: View {
     let ticket: ServiceTicket
     @ObservedObject var store: ServiceOpsStore
     @Binding var baseURL: String
@@ -1573,6 +1585,8 @@ private struct MobileMoreView: View {
                     }
                 }
                 Section("Work and reference") {
+                    NavigationLink { DashboardsView(store: store, baseURL: $baseURL, apiToken: $apiToken) } label: { Label("Dashboards", systemImage: "rectangle.3.group") }
+                    NavigationLink { ProjectsView(baseURL: baseURL, token: apiToken) } label: { Label("Projects", systemImage: "square.stack.3d.up") }
                     NavigationLink { ApprovalsView(baseURL: baseURL, token: apiToken) } label: { Label("My approvals", systemImage: "checkmark.seal") }
                     NavigationLink { KnowledgeView(baseURL: baseURL, token: apiToken) } label: { Label("Knowledge", systemImage: "book.closed") }
                 }
@@ -1754,7 +1768,7 @@ private struct SettingsView: View {
     }
 }
 
-private struct WorkspaceHeader: View {
+struct WorkspaceHeader: View {
     let title: String
     let subtitle: String
     let systemImage: String
@@ -1988,7 +2002,7 @@ private struct RecordTypeIcon: View {
     }
 }
 
-private struct PriorityBadge: View {
+struct PriorityBadge: View {
     let priority: String
 
     var body: some View {
@@ -2023,7 +2037,7 @@ private struct PriorityBadge: View {
     }
 }
 
-private struct PriorityDot: View {
+struct PriorityDot: View {
     let priority: String
 
     var body: some View {
@@ -2043,7 +2057,7 @@ private struct PriorityDot: View {
     }
 }
 
-private struct StateBadge: View {
+struct StateBadge: View {
     let state: String
 
     var body: some View {
@@ -2092,7 +2106,7 @@ private struct SecondaryButtonStyle: ButtonStyle {
     }
 }
 
-private struct IconButtonStyle: ButtonStyle {
+struct IconButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.subheadline.weight(.bold))

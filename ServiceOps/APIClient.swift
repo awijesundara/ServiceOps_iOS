@@ -301,6 +301,69 @@ final class ServiceOpsAPIClient {
         return response.data
     }
 
+    func dashboards() async throws -> DashboardListing {
+        let response: DataEnvelope<DashboardListing> = try await send(path: "/api/v1/mobile/dashboards")
+        return response.data
+    }
+
+    func dashboard(id: Int) async throws -> DashboardDocument {
+        let response: DataEnvelope<DashboardDocument> = try await send(path: "/api/v1/mobile/dashboards/\(id)")
+        return response.data
+    }
+
+    /// The tickets a dashboard number counts, newest update first.
+    func ticketList(_ reference: TicketListReference, cursor: String? = nil) async throws -> DashboardTicketPage {
+        var queryItems = [URLQueryItem(name: "kind", value: reference.kind),
+                          URLQueryItem(name: "filter", value: reference.filterParameter),
+                          URLQueryItem(name: "limit", value: "50")]
+        if let cursor {
+            queryItems.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+        return try await send(path: "/api/v1/mobile/ticket-list", queryItems: queryItems)
+    }
+
+    func projects() async throws -> [ProjectSummary] {
+        let response: DataEnvelope<[ProjectSummary]> = try await send(path: "/api/v1/projects")
+        return response.data
+    }
+
+    func project(key: String) async throws -> ProjectSummary {
+        let response: DataEnvelope<ProjectSummary> = try await send(path: "/api/v1/projects/\(key.urlPathEncoded)")
+        return response.data
+    }
+
+    func workItems(project: String, query: String = "", cursor: Int? = nil) async throws -> WorkItemPage {
+        var queryItems = [URLQueryItem(name: "limit", value: "100")]
+        if !query.isEmpty {
+            queryItems.append(URLQueryItem(name: "q", value: query))
+        }
+        if let cursor {
+            queryItems.append(URLQueryItem(name: "cursor", value: String(cursor)))
+        }
+        return try await send(path: "/api/v1/projects/\(project.urlPathEncoded)/work-items", queryItems: queryItems)
+    }
+
+    func workItem(key: String) async throws -> WorkItem {
+        let response: DataEnvelope<WorkItem> = try await send(path: "/api/v1/work-items/\(key.urlPathEncoded)")
+        return response.data
+    }
+
+    func moveWorkItem(key: String, statusID: Int) async throws -> WorkItem {
+        let response: DataEnvelope<WorkItem> = try await send(
+            path: "/api/v1/work-items/\(key.urlPathEncoded)", method: "PATCH",
+            body: WorkItemStatusUpdate(statusId: statusID), idempotencyKey: "work-item-\(UUID().uuidString)"
+        )
+        return response.data
+    }
+
+    func addWorkItemComment(key: String, body: String) async throws -> WorkItemComment {
+        let response: DataEnvelope<WorkItemComment> = try await send(
+            path: "/api/v1/work-items/\(key.urlPathEncoded)/comments", method: "POST",
+            body: CommentRequest(body: body), idempotencyKey: "work-item-comment-\(UUID().uuidString)"
+        )
+        return response.data
+    }
+
     private func send<Response: Decodable>(
         path: String,
         method: String = "GET",

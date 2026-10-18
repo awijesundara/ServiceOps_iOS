@@ -6,7 +6,7 @@
 [![Last commit](https://img.shields.io/github/last-commit/awijesundara/ServiceOps_iOS/main)](https://github.com/awijesundara/ServiceOps_iOS/commits/main)
 [![Top language](https://img.shields.io/github/languages/top/awijesundara/ServiceOps_iOS)](https://github.com/awijesundara/ServiceOps_iOS)
 [![Code size](https://img.shields.io/github/languages/code-size/awijesundara/ServiceOps_iOS)](https://github.com/awijesundara/ServiceOps_iOS)
-[![version](https://img.shields.io/badge/version-1.3.2%20%28build%208%29-003E4C)](#)
+[![version](https://img.shields.io/badge/version-1.4.0%20%28build%209%29-003E4C)](#)
 [![Swift](https://img.shields.io/badge/Swift-SwiftUI-F05138?logo=swift&logoColor=white)](ServiceOps)
 [![iOS](https://img.shields.io/badge/iOS-26.5%2B-000000?logo=apple&logoColor=white)](ServiceOps.xcodeproj)
 [![backend](https://img.shields.io/badge/backend-ServiceOps-0C7C68)](https://github.com/awijesundara/ServiceOps)
@@ -16,7 +16,7 @@ Native iPhone workspace for the self-hosted
 the signed-in user's ServiceOps identity; it does not embed or share a static
 API key.
 
-Current app version: **1.3.2 (build 8)**
+Current app version: **1.4.0 (build 9)**
 
 ## Screenshots
 
@@ -30,10 +30,12 @@ Six freshly captured previews of **v1.3.2** on iPhone 17 Pro (iOS 26.5). Home in
 
 ## Included capabilities
 
-- Local or LDAP user authentication with MFA and rotating access/refresh tokens.
+- Local, LDAP, Keycloak or Cloudflare Access sign-in with MFA and rotating access/refresh tokens.
 - Face ID or Touch ID foreground lock and Keychain-protected session storage.
 - Passkey registration and passwordless sign-in.
 - Home dashboard, assigned incidents and changes, record search and filtering.
+- The personal and team dashboards configured on the web (ServiceOps 1.113.54 or later): count tiles, ticket lists, charts, trends, team workload, tasks, approvals, upcoming changes, requests, knowledge, work items, notes and links. Every number opens exactly the tickets it counts.
+- Projects: browse projects and their work items, change an item's status and comment on it.
 - Incident creation, record updates, work notes, and activity history.
 - Linked ticket CIs and services, exact rack destinations, record fields, change governance, reviews, SLAs, approvals, tasks and related records. Detail sections follow server permissions and support older servers.
 - Approval actions, knowledge search, searchable assets with site/rack/hardware details, and connection diagnostics.
